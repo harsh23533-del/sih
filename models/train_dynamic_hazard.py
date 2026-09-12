@@ -76,6 +76,10 @@ def main(args):
     dynamic_features = [c for c in RAINFALL_COLS if c in df.columns] + [
         "rainfall_trend", "is_monsoon_season", "susceptibility_score",
     ]
+    # soil_moisture_index is itself dynamic (baseline wetness + recent rainfall),
+    # so it belongs with Model B's near-term hazard signal, not just Model A.
+    if "soil_moisture_index" in df.columns:
+        dynamic_features.append("soil_moisture_index")
     df = df.dropna(subset=dynamic_features + ["label"])
     print(f"Training Model B on {len(df)} rows, {df['label'].sum()} positive, "
           f"{len(dynamic_features)} dynamic features: {dynamic_features}")

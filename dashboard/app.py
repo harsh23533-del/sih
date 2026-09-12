@@ -65,10 +65,31 @@ FRIENDLY_FACTORS = {
     "slope": ("how steep the land is", "⛰️"),
     "aspect": ("which direction the slope faces", "🧭"),
     "curvature": ("how uneven the ground is", "🪨"),
+    "ruggedness_tri": ("how rugged the terrain is", "🪨"),
     "elevation": ("how high up the area is", "🏔️"),
     "road_distance": ("distance from the nearest road", "🛣️"),
     "historical_landslide_density": ("past landslides nearby", "📜"),
+    "distance_to_nearest_landslide_m": ("distance to the closest past landslide", "📜"),
     "susceptibility_score": ("overall ground stability", "🧱"),
+    "soil": ("the type of soil here", "🟤"),
+    "geology": ("the type of rock underneath", "🪨"),
+    "NDVI": ("how much vegetation/tree cover there is", "🌳"),
+    "land_use": ("how the land is being used (forest/farm/built-up)", "🏞️"),
+    "seismic_pga": ("how earthquake-prone the area is", "🌐"),
+    "fault_distance_km": ("distance to the nearest earthquake fault line", "🌐"),
+    "soil_moisture_baseline": ("how naturally damp the ground stays", "💧"),
+    "soil_moisture_index": ("how saturated the ground is right now", "💧"),
+    "insolation_proxy": ("how much direct sun this slope gets", "☀️"),
+    "freeze_thaw_index": ("how much the ground freezes and thaws", "❄️"),
+}
+
+
+# Human labels for the synthetic categorical codes (soil/geology/land_use),
+# so the terrain table never shows a bare integer to a non-technical visitor.
+CATEGORY_LABELS = {
+    "soil": {1: "Rocky", 2: "Sandy", 3: "Loamy", 4: "Clayey"},
+    "geology": {1: "Gneiss", 2: "Schist", 3: "Phyllite", 4: "Quartzite", 5: "Alluvium"},
+    "land_use": {1: "Forest", 2: "Agriculture", 3: "Urban", 4: "Barren/Snow"},
 }
 
 
@@ -314,8 +335,18 @@ def main():
 
         st.markdown("**Terrain & environment at this location**")
         env_cols = [c for c in ["elevation", "slope", "aspect", "curvature", "road_distance",
-                                 "historical_landslide_density"] if c in base_row]
-        friendly_env = {friendly_name(c)[0].capitalize(): base_row[c] for c in env_cols}
+                                 "historical_landslide_density", "soil", "geology", "NDVI",
+                                 "land_use", "seismic_pga", "fault_distance_km",
+                                 "soil_moisture_index", "insolation_proxy", "freeze_thaw_index"]
+                    if c in base_row]
+        friendly_env = {}
+        for c in env_cols:
+            val = base_row[c]
+            if c in CATEGORY_LABELS:
+                val = CATEGORY_LABELS[c].get(int(val), val)
+            elif isinstance(val, float):
+                val = round(val, 2)
+            friendly_env[friendly_name(c)[0].capitalize()] = val
         st.table(pd.DataFrame([friendly_env]))
 
 

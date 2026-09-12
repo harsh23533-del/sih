@@ -6,7 +6,8 @@ combined training table matching the schema from the project plan:
 
 latitude, longitude, date, rainfall_1d, rainfall_3d, rainfall_7d, rainfall_15d,
 rainfall_30d, elevation, slope, aspect, curvature, soil, geology, NDVI,
-road_distance, drainage_distance, historical_landslide_density, label
+land_use, seismic_pga, fault_distance_km, soil_moisture_index, insolation_proxy,
+freeze_thaw_index, road_distance, drainage_distance, historical_landslide_density, label
 
 Run this AFTER:
   1. negative_sampling.py        -> negative_samples.csv
@@ -14,7 +15,7 @@ Run this AFTER:
      coolr_ner.csv / GSI Bhukosh export — add a `label` column of 1s if missing)
 
 Requirements:
-    pip install pandas numpy
+    pip install pandas numpy rasterio
 
 Usage:
     python build_feature_table.py \\
@@ -23,6 +24,13 @@ Usage:
         --dem ../data/terrain/sikkim_srtm30m.tif \\
         --rainfall-dir ../data/rainfall \\
         --osm-roads ../data/infrastructure/sikkim_osm.geojson \\
+        --soil ../data/soil_geology/sikkim_soil.tif \\
+        --geology ../data/soil_geology/sikkim_geology.tif \\
+        --seismic ../data/soil_geology/sikkim_seismic_pga.tif \\
+        --moisture ../data/soil_geology/sikkim_soil_moisture.tif \\
+        --faults ../data/soil_geology/sikkim_faults.geojson \\
+        --ndvi ../data/satellite/sikkim_ndvi.tif \\
+        --landuse ../data/satellite/sikkim_landuse.tif \\
         --out ../data/processed/final_feature_table.csv
 """
 import argparse
@@ -33,6 +41,7 @@ import pandas as pd
 from terrain_features import TerrainExtractor
 from rainfall_features import RainfallExtractor
 from density_distance_features import add_landslide_density_and_distance, add_road_distance
+from environmental_features import EnvironmentalExtractor, add_derived_environmental_features
 
 
 def clean_missing(df: pd.DataFrame) -> pd.DataFrame:
@@ -48,6 +57,9 @@ def clean_missing(df: pd.DataFrame) -> pd.DataFrame:
         "elevation", "slope", "aspect", "curvature", "ruggedness_tri",
         "rainfall_1d", "rainfall_3d", "rainfall_7d", "rainfall_15d", "rainfall_30d",
         "road_distance", "historical_landslide_density",
+        "soil", "geology", "NDVI", "land_use", "seismic_pga",
+        "fault_distance_km", "soil_moisture_baseline",
+        "insolation_proxy", "freeze_thaw_index", "soil_moisture_index",
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -94,21 +106,31 @@ def main(args):
     # 4. Road distance
     combined = add_road_distance(combined, args.osm_roads)
 
-    # 5. Clean
-    combined = clean_missing(combined)
+    # 5. Soil / geology / NDVI / land use / seismic / moisture / fault distance
+    env = EnvironmentalExtractor(
+        soil_path=args.soil, geology_path=args.geology, ndvi_path=args.ndvi,
+        landuse_path=args.landuse, seismic_path=args.seismic,
+        moisture_path=args.moisture, faults_path=args.faults,
+    )
+    env_feats = combined.apply(
+        lambda r: env.sample(r["latitude"], r["longitude"]), axis=1, result_type="expand"
+    )
+    combined = pd.concat([combined, env_feats], axis=1)
 
-    # NOTE: soil, geology, NDVI columns are left as placeholders here — join those
-    # in separately once you've extracted them from Bhuvan/GSI/Sentinel-2 rasters,
-    # using the same TerrainExtractor-style point-sampling pattern.
-    for col in ["soil", "geology", "NDVI"]:
-        if col not in combined.columns:
-            combined[col] = np.nan
+    # 6. Derived environmental features (insolation, freeze-thaw, dynamic soil moisture)
+    combined = add_derived_environmental_features(combined)
+
+    # 7. Clean
+    combined = clean_missing(combined)
 
     final_cols = [
         "latitude", "longitude", "date",
         "rainfall_1d", "rainfall_3d", "rainfall_7d", "rainfall_15d", "rainfall_30d",
         "elevation", "slope", "aspect", "curvature", "ruggedness_tri",
-        "soil", "geology", "NDVI",
+        "soil", "geology", "NDVI", "land_use",
+        "seismic_pga", "fault_distance_km",
+        "soil_moisture_baseline", "soil_moisture_index",
+        "insolation_proxy", "freeze_thaw_index",
         "road_distance", "historical_landslide_density", "distance_to_nearest_landslide_m",
         "label",
     ]
@@ -125,6 +147,13 @@ if __name__ == "__main__":
     parser.add_argument("--dem", required=True)
     parser.add_argument("--rainfall-dir", required=True)
     parser.add_argument("--osm-roads", required=True)
+    parser.add_argument("--soil", required=True)
+    parser.add_argument("--geology", required=True)
+    parser.add_argument("--ndvi", required=True)
+    parser.add_argument("--landuse", required=True)
+    parser.add_argument("--seismic", required=True)
+    parser.add_argument("--moisture", required=True)
+    parser.add_argument("--faults", required=True)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     main(args)

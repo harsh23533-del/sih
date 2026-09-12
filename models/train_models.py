@@ -31,7 +31,13 @@ FEATURE_COLS = [
     "elevation", "slope", "aspect", "curvature", "ruggedness_tri",
     "rainfall_1d", "rainfall_3d", "rainfall_7d", "rainfall_15d", "rainfall_30d",
     "road_distance", "historical_landslide_density", "distance_to_nearest_landslide_m",
-    # soil / geology / NDVI included if present and numeric-encoded already
+    # Literature-standard factors added on top of the original terrain/rainfall set —
+    # soil/geology/land_use are already integer-coded categories from the synthetic
+    # rasters, so tree models can split on them directly with no extra encoding.
+    "soil", "geology", "NDVI", "land_use",
+    "seismic_pga", "fault_distance_km",
+    "soil_moisture_baseline", "soil_moisture_index",
+    "insolation_proxy", "freeze_thaw_index",
 ]
 
 

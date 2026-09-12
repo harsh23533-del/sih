@@ -26,6 +26,13 @@ echo "== 3/6: Building final feature table =="
   --dem ../data/terrain/sikkim_srtm30m.tif \
   --rainfall-dir ../data/rainfall \
   --osm-roads ../data/infrastructure/sikkim_osm.geojson \
+  --soil ../data/soil_geology/sikkim_soil.tif \
+  --geology ../data/soil_geology/sikkim_geology.tif \
+  --seismic ../data/soil_geology/sikkim_seismic_pga.tif \
+  --moisture ../data/soil_geology/sikkim_soil_moisture.tif \
+  --faults ../data/soil_geology/sikkim_faults.geojson \
+  --ndvi ../data/satellite/sikkim_ndvi.tif \
+  --landuse ../data/satellite/sikkim_landuse.tif \
   --out ../data/processed/final_feature_table.csv)
 
 echo "== 4/6: Training Model A (susceptibility) =="
