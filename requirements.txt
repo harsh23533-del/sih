@@ -17,4 +17,5 @@ dask
 # requirements-dashboard.txt for a lighter deploy-only install)
 streamlit
 folium
+streamlit-js-eval
 plotly

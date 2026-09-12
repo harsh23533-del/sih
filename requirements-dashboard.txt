@@ -1,13 +1,20 @@
-# Minimal deps to deploy dashboard/app.py on Streamlit Community Cloud.
+# Minimal deps to deploy dashboard/app.py on Streamlit Community Cloud / Render.
 # The heavier geospatial libs (rasterio, geopandas, xarray) are NOT needed
 # at dashboard runtime — they're only used offline to build
 # data/processed/final_feature_table.csv and the .pkl models, which ship
 # as committed files the dashboard just loads.
-streamlit
-pandas
-numpy
-scikit-learn
-xgboost
-shap
-folium
-plotly
+#
+# Versions are PINNED (not left open) because this file was tested end to
+# end against these exact versions (see dashboard/_test_app.py-style local
+# run with streamlit.testing.v1.AppTest before every deploy). Loose ranges
+# previously caused a scikit-learn version mismatch between the pickled
+# models (trained on 1.8.0) and whatever pip resolved at build time.
+streamlit==1.63.0
+pandas==3.0.2
+numpy==2.4.4
+scikit-learn==1.8.0
+xgboost==3.4.1
+shap==0.52.0
+folium==0.20.0
+plotly==7.0.0
+streamlit-js-eval==1.0.0
