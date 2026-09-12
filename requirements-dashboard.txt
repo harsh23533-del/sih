@@ -1,0 +1,13 @@
+# Minimal deps to deploy dashboard/app.py on Streamlit Community Cloud.
+# The heavier geospatial libs (rasterio, geopandas, xarray) are NOT needed
+# at dashboard runtime — they're only used offline to build
+# data/processed/final_feature_table.csv and the .pkl models, which ship
+# as committed files the dashboard just loads.
+streamlit
+pandas
+numpy
+scikit-learn
+xgboost
+shap
+folium
+plotly

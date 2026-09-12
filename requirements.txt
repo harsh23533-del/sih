@@ -1,0 +1,20 @@
+# Full pipeline (synthetic data generation + preprocessing + training)
+rasterio
+scipy
+pandas
+numpy
+scikit-learn
+xgboost
+shap
+geopandas
+shapely
+pyproj
+xarray
+netCDF4
+dask
+
+# Dashboard / deployment (Streamlit Cloud only needs this subset — see
+# requirements-dashboard.txt for a lighter deploy-only install)
+streamlit
+folium
+plotly
