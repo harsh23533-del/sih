@@ -38,10 +38,13 @@ def parse_cli_args():
     parser.add_argument("--features", required=True)
     parser.add_argument("--model-a", required=True)
     parser.add_argument("--model-b", required=True)
-    if "--" in sys.argv:
-        argv = sys.argv[sys.argv.index("--") + 1:]
-    else:
-        argv = []
+    # Streamlit's CLI sometimes forwards the "--" separator to the script and
+    # sometimes strips it before handing off sys.argv, depending on version.
+    # Handle both: drop a leading "--" marker if present, otherwise just use
+    # everything after the script name.
+    argv = sys.argv[1:]
+    if "--" in argv:
+        argv = argv[argv.index("--") + 1:]
     return parser.parse_args(argv)
 
 
