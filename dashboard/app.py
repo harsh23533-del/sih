@@ -37,6 +37,7 @@ from risk_engine import load_models, score_single_location, score_table  # noqa:
 from shap_analysis import explain_location  # noqa: E402
 from alert_engine import process_alert  # noqa: E402
 from gis_map import build_friendly_map  # noqa: E402
+from live_weather import fetch_live_rainfall  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +187,14 @@ def get_features(path: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+@st.cache_data(show_spinner=False, ttl=600)
+def get_live_rainfall(lat: float, lon: float):
+    """Cached for 10 minutes (rain doesn't change second-to-second) and
+    keyed on a coordinate rounded to ~1km, so nearby clicks/searches share
+    one Open-Meteo call instead of each firing a fresh request."""
+    return fetch_live_rainfall(lat, lon)
+
+
 @st.cache_data(show_spinner=False)
 def score_sample_points(map_df: pd.DataFrame, _model_a, _model_b) -> pd.DataFrame:
     """Batch-scores the map's sample points once and caches the result, so
@@ -323,6 +332,12 @@ def main():
         st.caption("Slide to simulate a bigger or smaller storm on top of today's data.")
         rain_multiplier = st.slider("Rain intensity", 0.0, 3.0, 1.0, 0.1,
                                      format="%.1fx", label_visibility="collapsed")
+        use_live_rain = st.checkbox(
+            "Use live rainfall (real weather, not the synthetic dataset)", value=True,
+            help="Fetches actual recent + forecast rainfall for the exact point you're "
+                 "checking, from the free Open-Meteo weather service, and uses that "
+                 "instead of this location's synthetic rainfall_* values."
+        )
         st.divider()
 
         st.header("📍 Set a location")
@@ -418,6 +433,20 @@ def main():
     else:
         st.info("📍 Detecting your location — allow location access if your browser asks...")
         st.stop()
+
+    # --- Swap in live rainfall for this exact point, if enabled ------------
+    # Terrain/geology/soil-type etc. still come from the nearest synthetic
+    # sample point (base_row) -- only the rainfall_* columns, which actually
+    # change day to day, get replaced with real current/forecast weather.
+    if use_live_rain and user_latlon:
+        live_rain = get_live_rainfall(round(user_latlon[0], 2), round(user_latlon[1], 2))
+        if live_rain:
+            base_row.update(live_rain)
+            distance_note = (distance_note + " " if distance_note else "") + \
+                "🌧️ Using live rainfall for this exact point."
+        else:
+            distance_note = (distance_note + " " if distance_note else "") + \
+                "⚠️ Live rainfall unavailable right now — showing dataset values instead."
 
     # --- Score this location -------------------------------------------------
     scenario_row = dict(base_row)
