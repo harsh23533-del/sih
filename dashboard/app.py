@@ -204,6 +204,41 @@ def nearest_row(df: pd.DataFrame, lat: float, lon: float):
     return df.loc[idx], float(dists.loc[idx])
 
 
+# Spoken alert text for the two levels that actually warrant an audible
+# warning — no API key, no external TTS service: this uses the browser's
+# own built-in Web Speech API (SpeechSynthesis), free and offline-capable
+# once the page has loaded.
+SPEECH_MESSAGES = {
+    "High": "Warning. Landslide risk is high here. Be ready to move to a safe place.",
+    "Critical": "Danger. Landslide risk is critical. Leave the area now and move to a safe place immediately.",
+}
+
+
+def speak_text(text: str, dedupe_key: str):
+    """Speaks `text` aloud via the browser's built-in speechSynthesis —
+    no API key needed. Only actually re-speaks when dedupe_key changes
+    (tracked in session_state), so it doesn't repeat itself every time
+    Streamlit reruns the script for an unrelated interaction."""
+    if st.session_state.get("_last_spoken_key") == dedupe_key:
+        return
+    st.session_state["_last_spoken_key"] = dedupe_key
+    safe_text = text.replace("\\", "\\\\").replace('"', '\\"')
+    st.html(
+        f"""<script>
+        (function() {{
+            try {{
+                window.speechSynthesis.cancel();
+                const utter = new SpeechSynthesisUtterance("{safe_text}");
+                utter.rate = 0.95;
+                utter.pitch = 1.0;
+                window.speechSynthesis.speak(utter);
+            }} catch (e) {{ /* speech not supported in this browser — fail silently */ }}
+        }})();
+        </script>""",
+        unsafe_allow_javascript=True,
+    )
+
+
 def status_card(level: str, extra_note: str = ""):
     ui = LEVEL_UI.get(level, LEVEL_UI["Moderate"])
     st.markdown(
@@ -296,6 +331,13 @@ def main():
     loc = get_geolocation()
 
     with st.sidebar:
+        st.header("🔊 Voice alerts")
+        speak_enabled = st.checkbox("Speak danger alerts aloud", value=True)
+        if st.button("🔈 Test voice"):
+            speak_text("This is a test of the voice alert system.", dedupe_key="__test__")
+        st.caption("Uses your browser's built-in voice — no data sent anywhere, no account needed.")
+        st.divider()
+
         st.header("🌧️ What-if: heavier or lighter rain?")
         st.caption("Slide to simulate a bigger or smaller storm on top of today's data.")
         rain_multiplier = st.slider("Rain intensity", 0.0, 3.0, 1.0, 0.1,
@@ -393,6 +435,11 @@ def main():
 
     # --- Front screen: just the color + plain notation, nothing technical ---
     status_card(level, extra_note=distance_note)
+
+    # Speak aloud for genuine danger levels only — not for every level, and
+    # not repeatedly on every unrelated rerun (deduped by location + level).
+    if speak_enabled and level in SPEECH_MESSAGES:
+        speak_text(SPEECH_MESSAGES[level], dedupe_key=f"{location_name}_{level}")
 
     factors = explain_location(scenario_row, model_a, model_b, top_n=5)
     st.markdown(f"**{ai_summary_sentence(factors)}**")
