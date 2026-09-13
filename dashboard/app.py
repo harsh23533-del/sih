@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "models"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "explainability"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "alerts"))
 
-from risk_engine import load_models, score_single_location  # noqa: E402
+from risk_engine import load_models, score_single_location, score_table  # noqa: E402
 from shap_analysis import explain_location  # noqa: E402
 from alert_engine import process_alert  # noqa: E402
 from gis_map import build_friendly_map  # noqa: E402
@@ -186,6 +186,16 @@ def get_features(path: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+@st.cache_data(show_spinner=False)
+def score_sample_points(map_df: pd.DataFrame, _model_a, _model_b) -> pd.DataFrame:
+    """Batch-scores the map's sample points once and caches the result, so
+    dragging the rain slider, ticking a checkbox, or tapping the map doesn't
+    silently re-run 150 individual model predictions on every rerun. The
+    leading underscore on _model_a/_model_b tells st.cache_data to key the
+    cache on map_df's contents only, not on the (unhashable) model objects."""
+    return score_table(map_df.copy(), _model_a, _model_b)
+
+
 def haversine_km(lat1, lon1, lat2, lon2):
     r = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -297,7 +307,16 @@ def main():
         st.session_state.clicked_latlon = None
 
     # --- Auto-detect the visitor's location, no typing required ------------
-    loc = get_geolocation()
+    # Only ask the browser once per session: get_geolocation() triggers a
+    # real GPS/network location fix, and re-running it on every widget
+    # interaction (slider drag, checkbox, map tap) is what was making every
+    # click feel slow. Cache the result and only re-ask if it hasn't
+    # resolved yet, or the user explicitly asks to refresh it.
+    if "geo_loc" not in st.session_state:
+        st.session_state.geo_loc = None
+    if st.session_state.geo_loc is None:
+        st.session_state.geo_loc = get_geolocation()
+    loc = st.session_state.geo_loc
 
     with st.sidebar:
         st.header("🌧️ What-if: heavier or lighter rain?")
@@ -309,6 +328,9 @@ def main():
         st.header("📍 Set a location")
         st.caption("Didn't get a location prompt, or want to check somewhere else? "
                    "Set it manually below, or tap anywhere on the map itself.")
+        if st.button("🔄 Refresh my live location"):
+            st.session_state.geo_loc = None
+            st.rerun()
         if st.session_state.clicked_latlon:
             lat_c, lon_c = st.session_state.clicked_latlon
             st.info(f"📌 Showing the point you tapped on the map "
@@ -408,7 +430,10 @@ def main():
     ui = LEVEL_UI.get(level, LEVEL_UI["Moderate"])
 
     # --- Who/where: a real place name, not just raw coordinates ------------
-    location_name = get_location_name(*user_latlon)
+    # Round to ~110m before the reverse-geocode lookup so nearby map taps
+    # reuse the cache instead of firing a fresh (up to 4s) network call for
+    # every last-decimal-place difference in the click coordinates.
+    location_name = get_location_name(round(user_latlon[0], 3), round(user_latlon[1], 3))
     st.markdown(
         f"<p style='text-align:center; color:gray; margin-bottom:4px;'>📍 {location_name}</p>",
         unsafe_allow_html=True,
@@ -435,10 +460,7 @@ def main():
                "to check the risk there instead.")
     sample_size = min(len(df), 150)
     map_df = df.sample(sample_size, random_state=42) if len(df) > sample_size else df.copy()
-    scored_sample = pd.DataFrame([
-        {**row, **score_single_location(row, model_a, model_b)}
-        for row in map_df.to_dict("records")
-    ])
+    scored_sample = score_sample_points(map_df, model_a, model_b)
     fmap = build_friendly_map(scored_sample, user_location=user_latlon, user_risk_level=level,
                                user_location_name=location_name)
     map_state = st_folium(fmap, height=420, width=None, returned_objects=["last_clicked"],
