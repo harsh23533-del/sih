@@ -18,6 +18,7 @@ Usage:
         --model-a ../models/best_model.pkl --model-b ../models/dynamic_hazard_model.pkl
 """
 import argparse
+import json
 import math
 import os
 import sys
@@ -48,6 +49,11 @@ from live_insolation import compute_insolation_proxy  # noqa: E402
 from live_freeze_thaw import compute_freeze_thaw_index  # noqa: E402
 from live_root_cohesion import compute_root_cohesion_proxy  # noqa: E402
 from live_exposure import compute_exposure_index  # noqa: E402
+from live_fault_distance import fetch_live_fault_distance  # noqa: E402
+from live_seismic_pga import fetch_live_seismic_pga  # noqa: E402
+from live_ndvi import fetch_live_ndvi  # noqa: E402
+from live_glacial_lake import fetch_live_glacial_lake_distance  # noqa: E402
+from live_geology import fetch_live_geology  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +236,40 @@ def get_live_soil_type(lat: float, lon: float):
     return fetch_live_soil_type(lat, lon)
 
 
+@st.cache_data(show_spinner=False)
+def get_live_fault_distance(lat: float, lon: float):
+    """No network call (real GEM fault database is bundled locally), so
+    no ttl needed -- fault geometry doesn't change on human timescales."""
+    return fetch_live_fault_distance(lat, lon)
+
+
+@st.cache_data(show_spinner=False)
+def get_live_seismic_pga(lat: float, lon: float):
+    """No network call -- current official BIS zone classification is a
+    constant for this whole study region, only changes if BIS revises
+    the code again."""
+    return fetch_live_seismic_pga(lat, lon)
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def get_live_ndvi(lat: float, lon: float):
+    """NDVI changes over weeks, not seconds, so a day's cache is plenty."""
+    return fetch_live_ndvi(lat, lon)
+
+
+@st.cache_data(show_spinner=False)
+def get_live_glacial_lake_distance(lat: float, lon: float):
+    """No network call (small local CSV), so no ttl needed."""
+    return fetch_live_glacial_lake_distance(lat, lon)
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def get_live_geology(lat: float, lon: float):
+    """Bedrock geology doesn't change; cached for a day mainly to be
+    polite to Macrostrat's free API."""
+    return fetch_live_geology(lat, lon)
+
+
 @st.cache_data(show_spinner=False, ttl=86400)
 def get_live_land_use(lat: float, lon: float):
     return fetch_live_land_use(lat, lon)
@@ -267,6 +307,166 @@ def nearest_row(df: pd.DataFrame, lat: float, lon: float):
     dists = df.apply(lambda r: haversine_km(lat, lon, r["latitude"], r["longitude"]), axis=1)
     idx = dists.idxmin()
     return df.loc[idx], float(dists.loc[idx])
+
+
+# Spoken alert text for the two levels that actually warrant an audible
+# warning — no API key, no external TTS service: this uses the browser's
+# own built-in Web Speech API (SpeechSynthesis), free and offline-capable
+# once the page has loaded.
+SPEECH_MESSAGES = {
+    "High": "Warning. Landslide risk is high here. Be ready to move to a safe place.",
+    "Critical": "Danger. Landslide risk is critical. Leave the area now and move to a safe place immediately.",
+}
+
+
+def speak_text(text: str, dedupe_key: str):
+    """Speaks `text` aloud via the browser's built-in speechSynthesis —
+    no API key needed. Only actually re-speaks when dedupe_key changes
+    (tracked in session_state), so it doesn't repeat itself every time
+    Streamlit reruns the script for an unrelated interaction."""
+    if st.session_state.get("_last_spoken_key") == dedupe_key:
+        return
+    st.session_state["_last_spoken_key"] = dedupe_key
+    safe_text = text.replace("\\", "\\\\").replace('"', '\\"')
+    st.html(
+        f"""<script>
+        (function() {{
+            try {{
+                window.speechSynthesis.cancel();
+                const utter = new SpeechSynthesisUtterance("{safe_text}");
+                utter.rate = 0.95;
+                utter.pitch = 1.0;
+                window.speechSynthesis.speak(utter);
+            }} catch (e) {{ /* speech not supported in this browser — fail silently */ }}
+        }})();
+        </script>""",
+        unsafe_allow_javascript=True,
+    )
+
+
+
+def render_hero_terrain_3d(location_name: str, distance_to_landslide_km, height_px: int = 220):
+    """A rotating 3D low-poly mountain header, labeled with the exact point
+    being checked and the real distance to the nearest recorded landslide.
+    Purely decorative geometry (not a real DEM) -- pure client-side
+    Three.js from cdnjs (r128, verified not to 404), no API key, no
+    Python-side rendering cost. The label position is computed each frame
+    from the marker's actual 3D projection, so it stays locked onto the
+    marker as the mountain sways."""
+    loc_js = json.dumps(location_name or "Your location").replace("</", "<\\/")
+    if distance_to_landslide_km is not None:
+        dist_js = json.dumps(
+            f"Nearest recorded landslide: {distance_to_landslide_km:.0f} km away"
+        ).replace("</", "<\\/")
+    else:
+        dist_js = json.dumps("Nearest recorded landslide: distance unavailable").replace("</", "<\\/")
+    st.html(
+        f"""
+        <div style="position:relative; width:100%; height:{height_px}px;
+                    border-radius:12px; overflow:hidden; background:#0a1420; margin-bottom:8px;">
+          <div id="hero3d-loc" style="position:absolute; z-index:3; background:rgba(10,20,32,0.75);
+                      border:0.5px solid #ff9d4d; border-radius:8px; padding:3px 7px;
+                      white-space:nowrap; transform:translate(8px,-30px); font-family:sans-serif;">
+            <p style="font-size:11px; color:#ffcda0; margin:0; font-weight:500;"></p>
+          </div>
+          <div style="position:absolute; left:10px; bottom:10px; z-index:3; max-width:60%;
+                      background:rgba(10,20,32,0.75); border:0.5px solid #7fd9a8; border-radius:8px;
+                      padding:3px 8px; font-family:sans-serif;">
+            <p style="font-size:11px; color:#bdf0d3; margin:0; font-weight:500;"></p>
+          </div>
+          <div id="hero3d-container" style="position:absolute; inset:0;"></div>
+        </div>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+        <script>
+        (function() {{
+          var wrap = document.getElementById('hero3d-container').parentElement;
+          var locEl = document.getElementById('hero3d-loc');
+          locEl.querySelector('p').textContent = {loc_js};
+          var distEl = wrap.children[1].querySelector('p');
+          distEl.textContent = {dist_js};
+          var w = wrap.clientWidth, h = {height_px};
+
+          var scene = new THREE.Scene();
+          scene.fog = new THREE.FogExp2(0x0a1420, 0.055);
+          var camera = new THREE.PerspectiveCamera(42, w / h, 0.1, 100);
+          camera.position.set(0, 2.4, 9.5);
+          camera.lookAt(0, 0.8, 0);
+          var renderer = new THREE.WebGLRenderer({{ alpha: true, antialias: true }});
+          renderer.setSize(w, h);
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+          document.getElementById('hero3d-container').appendChild(renderer.domElement);
+          renderer.domElement.style.cssText = 'display:block;';
+
+          scene.add(new THREE.AmbientLight(0x445566, 0.5));
+          var warm = new THREE.DirectionalLight(0xffb877, 1.1);
+          warm.position.set(5, 5, 4);
+          scene.add(warm);
+          var cool = new THREE.DirectionalLight(0x3fa7ff, 0.7);
+          cool.position.set(-6, 3, -5);
+          scene.add(cool);
+
+          function buildRidge(peaks, zBase, seedOffset, scaleY, baseColor, snowLine) {{
+            var geo = new THREE.ConeGeometry(4.0, 3.4, peaks, 6, true);
+            var pos = geo.attributes.position;
+            var colors = [];
+            var deep = new THREE.Color(baseColor);
+            var snow = new THREE.Color(0xf3f6f8);
+            for (var i = 0; i < pos.count; i++) {{
+              var x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+              var jag = Math.sin(i * 12.9898 + seedOffset) * 43758.5453;
+              jag = jag - Math.floor(jag);
+              var bump = (jag - 0.5) * 0.6 * Math.max(0, (y + 1.7) / 3.4);
+              var nx = x + bump, nz = z + bump * 0.6;
+              var ny = y * scaleY;
+              pos.setXYZ(i, nx, ny, nz);
+              var t = Math.min(1, Math.max(0, (ny + 1.7 * scaleY) / (3.4 * scaleY)));
+              var c = deep.clone();
+              if (t > snowLine) {{ c = deep.clone().lerp(snow, (t - snowLine) / (1 - snowLine)); }}
+              colors.push(c.r, c.g, c.b);
+            }}
+            geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            geo.computeVertexNormals();
+            var mat = new THREE.MeshStandardMaterial({{ vertexColors: true, flatShading: true, roughness: 0.85, metalness: 0.05 }});
+            var mesh = new THREE.Mesh(geo, mat);
+            mesh.position.z = zBase;
+            return mesh;
+          }}
+
+          var group = new THREE.Group();
+          group.add(buildRidge(9, -3.4, 11, 0.5, 0x233a4a, 0.66));
+          group.add(buildRidge(8, -1.5, 47, 0.78, 0x1f4a3d, 0.7));
+          group.add(buildRidge(7, 0.3, 3, 1.05, 0x184a34, 0.74));
+          group.position.y = -0.85;
+          scene.add(group);
+
+          var markerGeo = new THREE.RingGeometry(0.15, 0.2, 32);
+          var markerMat = new THREE.MeshBasicMaterial({{ color: 0xff9d4d, side: THREE.DoubleSide, transparent: true }});
+          var marker = new THREE.Mesh(markerGeo, markerMat);
+          marker.position.set(0.75, 1.0, 1.4);
+          marker.rotation.x = -Math.PI / 2.6;
+          group.add(marker);
+
+          var worldPos = new THREE.Vector3();
+          var t0 = performance.now();
+          function tick(now) {{
+            var dt = (now - t0) / 1000;
+            group.rotation.y = Math.sin(dt * 0.22) * 0.45;
+            var pulse = 1 + Math.sin(dt * 3) * 0.35;
+            marker.scale.set(pulse, pulse, pulse);
+            markerMat.opacity = 0.55 + Math.sin(dt * 3) * 0.35;
+            marker.getWorldPosition(worldPos);
+            var proj = worldPos.clone().project(camera);
+            locEl.style.left = ((proj.x * 0.5 + 0.5) * w) + 'px';
+            locEl.style.top = ((-proj.y * 0.5 + 0.5) * h) + 'px';
+            renderer.render(scene, camera);
+            requestAnimationFrame(tick);
+          }}
+          requestAnimationFrame(tick);
+        }})();
+        </script>
+        """,
+        unsafe_allow_javascript=True,
+    )
 
 
 def status_card(level: str, extra_note: str = ""):
@@ -377,6 +577,13 @@ def main():
     loc = st.session_state.geo_loc
 
     with st.sidebar:
+        st.header("🔊 Voice alerts")
+        speak_enabled = st.checkbox("Speak danger alerts aloud", value=True)
+        if st.button("🔈 Test voice"):
+            speak_text("This is a test of the voice alert system.", dedupe_key="__test__")
+        st.caption("Uses your browser's built-in voice — no data sent anywhere, no account needed.")
+        st.divider()
+
         st.header("🌧️ What-if: heavier or lighter rain?")
         st.caption("Slide to simulate a bigger or smaller storm on top of today's data.")
         rain_multiplier = st.slider("Rain intensity", 0.0, 3.0, 1.0, 0.1,
@@ -492,10 +699,13 @@ def main():
         st.stop()
 
     # --- Swap in live data for this exact point, if enabled ----------------
-    # Whatever a live source can't provide (geology, NDVI, seismic hazard,
-    # fault distance, InSAR, TWI, glacial lake distance) still comes from
-    # the nearest synthetic sample point (base_row) -- everything else
-    # gets overwritten with real data, or recomputed from it.
+    # Whatever a live source can't provide (InSAR deformation, TWI --
+    # both need a full geospatial processing pipeline with no free
+    # point-API equivalent) still comes from the nearest synthetic
+    # sample point (base_row) -- everything else gets overwritten with
+    # real data, or recomputed from it. geology is best-effort (Macrostrat's
+    # coverage is genuinely uneven outside North America -- see
+    # live_geology.py) so it may still fall back to synthetic in practice.
     if use_live_rain and user_latlon:
         live_notes = []
         live_rain = get_live_rainfall(round(user_latlon[0], 2), round(user_latlon[1], 2))
@@ -530,6 +740,32 @@ def main():
         if live_population:
             base_row.update(live_population)
             live_notes.append("population density")
+        live_fault = get_live_fault_distance(
+            round(user_latlon[0], 3), round(user_latlon[1], 3)
+        )
+        if live_fault:
+            base_row.update(live_fault)
+            live_notes.append("fault distance")
+        live_seismic = get_live_seismic_pga(
+            round(user_latlon[0], 3), round(user_latlon[1], 3)
+        )
+        if live_seismic:
+            base_row.update(live_seismic)
+            live_notes.append(f"seismic zone ({live_seismic.get('seismic_zone_label', '')})")
+        live_ndvi = get_live_ndvi(round(user_latlon[0], 3), round(user_latlon[1], 3))
+        if live_ndvi:
+            base_row.update(live_ndvi)
+            live_notes.append("NDVI")
+        live_glacial_lake = get_live_glacial_lake_distance(
+            round(user_latlon[0], 3), round(user_latlon[1], 3)
+        )
+        if live_glacial_lake:
+            base_row.update(live_glacial_lake)
+            live_notes.append("glacial lake distance")
+        live_geology = get_live_geology(round(user_latlon[0], 2), round(user_latlon[1], 2))
+        if live_geology:
+            base_row.update(live_geology)
+            live_notes.append("geology")
 
         # These four are pure formulas over whatever's now in base_row
         # (live where available, synthetic otherwise) -- see
@@ -574,6 +810,8 @@ def main():
     # reuse the cache instead of firing a fresh (up to 4s) network call for
     # every last-decimal-place difference in the click coordinates.
     location_name = get_location_name(round(user_latlon[0], 3), round(user_latlon[1], 3))
+    dist_m = base_row.get("distance_to_nearest_landslide_m")
+    render_hero_terrain_3d(location_name, (dist_m / 1000.0) if dist_m is not None else None)
     st.markdown(
         f"<p style='text-align:center; color:gray; margin-bottom:4px;'>📍 {location_name}</p>",
         unsafe_allow_html=True,
@@ -581,6 +819,11 @@ def main():
 
     # --- Front screen: just the color + plain notation, nothing technical ---
     status_card(level, extra_note=distance_note)
+
+    # Speak aloud for genuine danger levels only — not for every level, and
+    # not repeatedly on every unrelated rerun (deduped by location + level).
+    if speak_enabled and level in SPEECH_MESSAGES:
+        speak_text(SPEECH_MESSAGES[level], dedupe_key=f"{location_name}_{level}")
 
     factors = explain_location(scenario_row, model_a, model_b, top_n=5)
     st.markdown(f"**{ai_summary_sentence(factors)}**")
