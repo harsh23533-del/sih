@@ -49,6 +49,7 @@ from live_freeze_thaw import compute_freeze_thaw_index  # noqa: E402
 from live_root_cohesion import compute_root_cohesion_proxy  # noqa: E402
 from live_exposure import compute_exposure_index  # noqa: E402
 from live_fault_distance import fetch_live_fault_distance  # noqa: E402
+from live_seismic_pga import fetch_live_seismic_pga  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +237,14 @@ def get_live_fault_distance(lat: float, lon: float):
     """No network call (real GEM fault database is bundled locally), so
     no ttl needed -- fault geometry doesn't change on human timescales."""
     return fetch_live_fault_distance(lat, lon)
+
+
+@st.cache_data(show_spinner=False)
+def get_live_seismic_pga(lat: float, lon: float):
+    """No network call -- current official BIS zone classification is a
+    constant for this whole study region, only changes if BIS revises
+    the code again."""
+    return fetch_live_seismic_pga(lat, lon)
 
 
 @st.cache_data(show_spinner=False, ttl=86400)
@@ -500,10 +509,10 @@ def main():
         st.stop()
 
     # --- Swap in live data for this exact point, if enabled ----------------
-    # Whatever a live source can't provide (geology, NDVI, seismic hazard,
-    # InSAR, TWI, glacial lake distance) still comes from the nearest
-    # synthetic sample point (base_row) -- everything else gets
-    # overwritten with real data, or recomputed from it.
+    # Whatever a live source can't provide (geology, NDVI, InSAR, TWI,
+    # glacial lake distance) still comes from the nearest synthetic
+    # sample point (base_row) -- everything else gets overwritten with
+    # real data, or recomputed from it.
     if use_live_rain and user_latlon:
         live_notes = []
         live_rain = get_live_rainfall(round(user_latlon[0], 2), round(user_latlon[1], 2))
@@ -544,6 +553,12 @@ def main():
         if live_fault:
             base_row.update(live_fault)
             live_notes.append("fault distance")
+        live_seismic = get_live_seismic_pga(
+            round(user_latlon[0], 3), round(user_latlon[1], 3)
+        )
+        if live_seismic:
+            base_row.update(live_seismic)
+            live_notes.append("seismic zone (IS 1893:2025)")
 
         # These four are pure formulas over whatever's now in base_row
         # (live where available, synthetic otherwise) -- see

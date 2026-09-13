@@ -83,7 +83,7 @@ real source listed once available:
 | `soil` | Soil type (rocky/sandy/loamy/clayey) | Bhuvan / NBSS&LUP soil maps |
 | `geology` | Lithology (rock type) | GSI geology maps |
 | `fault_distance_km` | Distance to nearest active fault | **Live** — GEM Foundation Global Active Faults Database (`dashboard/live_fault_distance.py`), clipped to the NER/Himalaya region |
-| `seismic_pga` | Earthquake shaking intensity proxy | BIS seismic zonation (NER is mostly Zone V) / NDMA |
+| `seismic_pga` | Earthquake shaking intensity proxy | **Live** — current official BIS zone classification (`dashboard/live_seismic_pga.py`): per IS 1893 (Part 1):2025 (Dec 2025 revision), the entire Sikkim/Himalayan-arc study region is now Zone VI, Z = 0.75 (superseding the old Zone IV / Z = 0.24 figure this project's synthetic baseline had assumed) |
 | `NDVI` | Vegetation cover | Sentinel-2 (Copernicus) / Bhuvan |
 | `land_use` | Forest / agriculture / urban / barren | Bhuvan or Sentinel-2 LULC products |
 | `soil_moisture_baseline`, `soil_moisture_index` | Ground wetness/saturation | CGWB groundwater data + antecedent rainfall |
