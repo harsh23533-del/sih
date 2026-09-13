@@ -41,6 +41,13 @@ from live_weather import fetch_live_rainfall  # noqa: E402
 from live_soil import fetch_live_soil_moisture  # noqa: E402
 from live_terrain import fetch_live_terrain  # noqa: E402
 from live_landslide_history import fetch_live_landslide_history  # noqa: E402
+from live_soil_type import fetch_live_soil_type  # noqa: E402
+from live_land_use import fetch_live_land_use  # noqa: E402
+from live_population import fetch_live_population_density  # noqa: E402
+from live_insolation import compute_insolation_proxy  # noqa: E402
+from live_freeze_thaw import compute_freeze_thaw_index  # noqa: E402
+from live_root_cohesion import compute_root_cohesion_proxy  # noqa: E402
+from live_exposure import compute_exposure_index  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +224,22 @@ def get_live_landslide_history(lat: float, lon: float):
     return fetch_live_landslide_history(lat, lon)
 
 
+@st.cache_data(show_spinner=False, ttl=86400)
+def get_live_soil_type(lat: float, lon: float):
+    """Soil texture barely changes, so this is cached for a full day."""
+    return fetch_live_soil_type(lat, lon)
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def get_live_land_use(lat: float, lon: float):
+    return fetch_live_land_use(lat, lon)
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def get_live_population_density(lat: float, lon: float):
+    return fetch_live_population_density(lat, lon)
+
+
 @st.cache_data(show_spinner=False)
 def score_sample_points(map_df: pd.DataFrame, _model_a, _model_b) -> pd.DataFrame:
     """Batch-scores the map's sample points once and caches the result, so
@@ -333,6 +356,10 @@ def main():
 
     model_a, model_b = get_models(args.model_a, args.model_b)
     df = get_features(args.features)
+    # Reference range for normalizing a live population_density estimate
+    # into the same 0-1-friendly scale exposure_index was trained on.
+    pop_density_min = float(df["population_density"].min())
+    pop_density_max = float(df["population_density"].max())
 
     if "clicked_latlon" not in st.session_state:
         st.session_state.clicked_latlon = None
@@ -355,15 +382,18 @@ def main():
         rain_multiplier = st.slider("Rain intensity", 0.0, 3.0, 1.0, 0.1,
                                      format="%.1fx", label_visibility="collapsed")
         use_live_rain = st.checkbox(
-            "Use live data (weather, soil moisture, terrain — not the synthetic dataset)",
+            "Use live data (weather, soil, terrain, land use — not the synthetic dataset)",
             value=True,
             help="Fetches real rainfall/soil-moisture (Open-Meteo), real "
                  "elevation/slope/aspect/road & river distance (Open-Meteo Elevation "
-                 "+ OpenStreetMap), and real past-landslide density/distance (this "
-                 "project's own historical catalog) for the exact point you're "
-                 "checking. Whatever a source can't provide (geology, land use, "
-                 "seismic hazard, InSAR, etc.) still comes from the nearest "
-                 "synthetic sample point."
+                 "+ OpenStreetMap), real past-landslide density/distance (this "
+                 "project's own historical catalog), real soil type (ISRIC "
+                 "SoilGrids), and real land use & population density "
+                 "(OpenStreetMap) for the exact point you're checking -- plus a "
+                 "few more (sun exposure, freeze-thaw, root cohesion, exposure "
+                 "index) recomputed from those. Whatever a source can't provide "
+                 "(geology, vegetation index, seismic hazard, InSAR, etc.) still "
+                 "comes from the nearest synthetic sample point."
         )
         st.divider()
 
@@ -462,11 +492,10 @@ def main():
         st.stop()
 
     # --- Swap in live data for this exact point, if enabled ----------------
-    # Whatever a live source can't provide (geology, land use, seismic
-    # hazard, InSAR, etc.) still comes from the nearest synthetic sample
-    # point (base_row) -- only the pieces we have a real source for
-    # (rainfall, soil moisture, terrain, past-landslide history) get
-    # overwritten.
+    # Whatever a live source can't provide (geology, NDVI, seismic hazard,
+    # fault distance, InSAR, TWI, glacial lake distance) still comes from
+    # the nearest synthetic sample point (base_row) -- everything else
+    # gets overwritten with real data, or recomputed from it.
     if use_live_rain and user_latlon:
         live_notes = []
         live_rain = get_live_rainfall(round(user_latlon[0], 2), round(user_latlon[1], 2))
@@ -487,6 +516,42 @@ def main():
         if live_landslide_history:
             base_row.update(live_landslide_history)
             live_notes.append("past-landslide history")
+        live_soil_type = get_live_soil_type(round(user_latlon[0], 2), round(user_latlon[1], 2))
+        if live_soil_type:
+            base_row.update(live_soil_type)
+            live_notes.append("soil type")
+        live_land_use = get_live_land_use(round(user_latlon[0], 3), round(user_latlon[1], 3))
+        if live_land_use:
+            base_row.update(live_land_use)
+            live_notes.append("land use")
+        live_population = get_live_population_density(
+            round(user_latlon[0], 2), round(user_latlon[1], 2)
+        )
+        if live_population:
+            base_row.update(live_population)
+            live_notes.append("population density")
+
+        # These four are pure formulas over whatever's now in base_row
+        # (live where available, synthetic otherwise) -- see
+        # live_insolation.py / live_freeze_thaw.py / live_root_cohesion.py /
+        # live_exposure.py for why they reuse the dataset's own equations
+        # instead of a different live source, and why they can't fail.
+        if {"slope", "aspect"}.issubset(base_row):
+            base_row["insolation_proxy"] = compute_insolation_proxy(
+                base_row["slope"], base_row["aspect"]
+            )
+        if "elevation" in base_row:
+            base_row["freeze_thaw_index"] = compute_freeze_thaw_index(base_row["elevation"])
+        if "land_use" in base_row:
+            cohesion = compute_root_cohesion_proxy(base_row["land_use"], base_row.get("NDVI"))
+            if cohesion is not None:
+                base_row["root_cohesion_proxy"] = cohesion
+        if {"population_density", "road_distance"}.issubset(base_row):
+            base_row["exposure_index"] = compute_exposure_index(
+                base_row["population_density"], base_row["road_distance"],
+                pop_density_min, pop_density_max,
+            )
+
         if live_notes:
             distance_note = (distance_note + " " if distance_note else "") + \
                 f"🌍 Using live {', '.join(live_notes)} for this exact point."

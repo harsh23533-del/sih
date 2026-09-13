@@ -17,12 +17,17 @@ the search radius if nothing is found nearby.
 
 historical_landslide_density and distance_to_nearest_landslide_m are live
 too, but computed locally against this repo's own catalog rather than
-fetched from the network -- see live_landslide_history.py.
+fetched from the network -- see live_landslide_history.py. soil (type),
+land_use, and population_density are live via live_soil_type.py,
+live_land_use.py, and live_population.py respectively. insolation_proxy,
+freeze_thaw_index, root_cohesion_proxy, and exposure_index are live too,
+recomputed from these live inputs using the dataset's own original
+formulas -- see live_insolation.py, live_freeze_thaw.py,
+live_root_cohesion.py, and live_exposure.py.
 
-Left as synthetic (no simple free live source exists): geology, soil type,
-land_use, NDVI, seismic_pga, fault_distance_km, insar_deformation_mm_yr,
-twi, insolation_proxy, freeze_thaw_index, root_cohesion_proxy,
-glacial_lake_distance_km, population_density, exposure_index.
+Left as synthetic (no simple free live source exists): geology, NDVI,
+seismic_pga, fault_distance_km, insar_deformation_mm_yr, twi,
+glacial_lake_distance_km.
 """
 import math
 
@@ -49,7 +54,10 @@ def fetch_live_terrain(lat: float, lon: float) -> dict | None:
     try:
         d = _fetch_osm_distance_km(lat, lon, 'way["highway"]', [3000, 10000, 30000])
         if d is not None:
-            out["road_distance"] = round(d, 3)
+            # road_distance in the training data is in METERS (unlike
+            # drainage_distance_km, which really is km) -- convert here
+            # so a live value lines up with what the model was trained on.
+            out["road_distance"] = round(d * 1000, 1)
     except Exception:
         pass
     try:
