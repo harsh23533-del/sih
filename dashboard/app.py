@@ -418,51 +418,54 @@ def main():
                                user_location_name=location_name)
     st.html(f'<div style="height:420px;">{fmap._repr_html_()}</div>', unsafe_allow_javascript=True)
 
-    # --- Everything technical stays hidden until someone actually asks -----
-    with st.expander("🔍 Tap to see the full technical analysis"):
-        st.caption(
-            "Software-only, AI-driven decision-support tool — not a guarantee of "
-            "landslide occurrence or non-occurrence. Validate real decisions with "
-            "disaster-management authorities."
-        )
-        g1, g2 = st.columns([1, 1])
-        with g1:
-            st.plotly_chart(gauge_chart(result["final_risk_score"], ui["color"]),
-                             width="stretch")
-            st.caption(f"Risk score: {result['final_risk_score']} / 100 · "
-                       f"24h hazard probability: {result['dynamic_hazard_score']:.2f}")
-        with g2:
-            st.plotly_chart(rainfall_chart(scenario_row), width="stretch")
+    # --- Everything technical is shown directly — nothing hidden -----------
+    st.markdown("---")
+    st.markdown("### 🔍 Full technical analysis")
+    st.caption(
+        "Software-only, AI-driven decision-support tool — not a guarantee of "
+        "landslide occurrence or non-occurrence. Validate real decisions with "
+        "disaster-management authorities."
+    )
+    g1, g2 = st.columns([1, 1])
+    with g1:
+        st.plotly_chart(gauge_chart(result["final_risk_score"], ui["color"]),
+                         width="stretch")
+        st.caption(f"Risk score: {result['final_risk_score']} / 100 · "
+                   f"24h hazard probability: {result['dynamic_hazard_score']:.2f}")
+    with g2:
+        st.plotly_chart(rainfall_chart(scenario_row), width="stretch")
 
-        st.markdown("**Why this score — top contributing factors**")
-        if factors:
-            rows = []
-            for f in factors:
-                name, emoji = friendly_name(f["factor"])
-                direction = "⬆️ raises risk" if f["contribution_pct"] > 0 else "⬇️ lowers risk"
-                rows.append({"Factor": f"{emoji} {name}", "Effect": direction,
-                             "Weight": f"{abs(f['contribution_pct']):.0f}%"})
-            st.table(pd.DataFrame(rows))
-        else:
-            st.info("No clear standout factor for this location.")
+    st.markdown("**Why this score — top contributing factors**")
+    if factors:
+        rows = []
+        for f in factors:
+            name, emoji = friendly_name(f["factor"])
+            direction = "⬆️ raises risk" if f["contribution_pct"] > 0 else "⬇️ lowers risk"
+            rows.append({"Factor": f"{emoji} {name}", "Effect": direction,
+                         "Weight": f"{abs(f['contribution_pct']):.0f}%"})
+        st.table(pd.DataFrame(rows))
+    else:
+        st.info("No clear standout factor for this location.")
 
-        st.markdown("**Terrain & environment at this location**")
-        env_cols = [c for c in ["elevation", "slope", "aspect", "curvature", "road_distance",
-                                 "historical_landslide_density", "soil", "geology", "NDVI",
-                                 "land_use", "seismic_pga", "fault_distance_km",
-                                 "soil_moisture_index", "insolation_proxy", "freeze_thaw_index",
-                                 "twi", "drainage_distance_km", "root_cohesion_proxy",
-                                 "glacial_lake_distance_km", "population_density"]
-                    if c in base_row]
-        friendly_env = {}
-        for c in env_cols:
-            val = base_row[c]
-            if c in CATEGORY_LABELS:
-                val = CATEGORY_LABELS[c].get(int(val), val)
-            elif isinstance(val, float):
-                val = round(val, 2)
-            friendly_env[friendly_name(c)[0].capitalize()] = val
-        st.table(pd.DataFrame([friendly_env]))
+    st.markdown("**Every parameter at this location — nothing hidden**")
+    # Every feature column in the table (not a curated subset) — identifiers
+    # like latitude/longitude/date/label are shown separately, not repeated here.
+    excluded = {"latitude", "longitude", "date", "label"}
+    env_cols = [c for c in base_row.keys() if c not in excluded]
+    rows = []
+    for c in env_cols:
+        val = base_row[c]
+        if c in CATEGORY_LABELS:
+            val = CATEGORY_LABELS[c].get(int(val), val)
+        elif isinstance(val, float):
+            val = round(val, 3)
+        name, emoji = friendly_name(c)
+        # Cast to string: this column mixes numbers and category labels
+        # (e.g. "Loamy"), and a single object column with mixed types makes
+        # Streamlit's Arrow conversion silently retry/fall back on every
+        # render — casting up front avoids that entirely.
+        rows.append({"Parameter": f"{emoji} {name.capitalize()}", "Value": str(val)})
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
 if __name__ == "__main__":
