@@ -168,13 +168,29 @@ def build_friendly_map(scored_df: pd.DataFrame, user_location: tuple = None,
     if user_location:
         color, emoji, label = FRIENDLY_LEVELS.get(user_risk_level, ("#1565c0", "📍", "Your location"))
         name_line = f"<br>{user_location_name}" if user_location_name else ""
+        exact_lat, exact_lon = user_location
+        # A thin colored ring under the pin makes the exact searched/live
+        # point stand out clearly from the nearest-sample dots on the map,
+        # even when it lands close to (or on top of) one of them.
+        folium.CircleMarker(
+            location=user_location,
+            radius=14,
+            color="#1565c0",
+            weight=2,
+            fill=True,
+            fill_color="#ffffff",
+            fill_opacity=0.25,
+        ).add_to(fmap)
         folium.Marker(
             location=user_location,
-            icon=folium.Icon(color="blue", icon="user", prefix="fa"),
+            icon=folium.Icon(color="blue", icon="crosshairs", prefix="fa"),
             popup=folium.Popup(
-                f'<div style="text-align:center; font-size:14px;"><b>You are here</b>'
-                f'{name_line}<br>{emoji} {label}</div>', max_width=200),
-            tooltip=user_location_name or "You are here",
+                f'<div style="text-align:center; font-size:14px;"><b>Exact point</b>'
+                f'{name_line}<br>{emoji} {label}'
+                f'<br><span style="color:gray; font-size:12px;">{exact_lat:.5f}, {exact_lon:.5f}</span></div>',
+                max_width=220),
+            tooltip=user_location_name or f"{exact_lat:.5f}, {exact_lon:.5f}",
+            z_index_offset=1000,
         ).add_to(fmap)
 
     return fmap

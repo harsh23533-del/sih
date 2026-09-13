@@ -11,7 +11,7 @@ shows the same colors for everyone else on the map.
 
 Requirements:
     pip install streamlit pandas numpy plotly shap folium xgboost
-                scikit-learn streamlit-js-eval
+                scikit-learn streamlit-js-eval streamlit-folium
 
 Usage:
     streamlit run app.py -- --features ../data/processed/final_feature_table.csv \\
@@ -27,15 +27,29 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from streamlit_js_eval import get_geolocation
+from streamlit_folium import st_folium
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "models"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "explainability"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "alerts"))
 
-from risk_engine import load_models, score_single_location  # noqa: E402
+from risk_engine import load_models, score_single_location, score_table  # noqa: E402
 from shap_analysis import explain_location  # noqa: E402
 from alert_engine import process_alert  # noqa: E402
 from gis_map import build_friendly_map  # noqa: E402
+from live_weather import fetch_live_rainfall  # noqa: E402
+from live_soil import fetch_live_soil_moisture  # noqa: E402
+from live_terrain import fetch_live_terrain  # noqa: E402
+from live_landslide_history import fetch_live_landslide_history  # noqa: E402
+from live_soil_type import fetch_live_soil_type  # noqa: E402
+from live_land_use import fetch_live_land_use  # noqa: E402
+from live_population import fetch_live_population_density  # noqa: E402
+from live_insolation import compute_insolation_proxy  # noqa: E402
+from live_freeze_thaw import compute_freeze_thaw_index  # noqa: E402
+from live_root_cohesion import compute_root_cohesion_proxy  # noqa: E402
+from live_exposure import compute_exposure_index  # noqa: E402
+from live_fault_distance import fetch_live_fault_distance  # noqa: E402
+from live_seismic_pga import fetch_live_seismic_pga  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +199,74 @@ def get_features(path: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+@st.cache_data(show_spinner=False, ttl=600)
+def get_live_rainfall(lat: float, lon: float):
+    """Cached for 10 minutes (rain doesn't change second-to-second) and
+    keyed on a coordinate rounded to ~1km, so nearby clicks/searches share
+    one Open-Meteo call instead of each firing a fresh request."""
+    return fetch_live_rainfall(lat, lon)
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def get_live_soil_moisture(lat: float, lon: float):
+    return fetch_live_soil_moisture(lat, lon)
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def get_live_terrain(lat: float, lon: float):
+    """Terrain barely changes, so this is cached for a full day (also
+    keeps us polite to the free Overpass/elevation APIs)."""
+    return fetch_live_terrain(lat, lon)
+
+
+@st.cache_data(show_spinner=False)
+def get_live_landslide_history(lat: float, lon: float):
+    """No network call (catalog is local), so no ttl needed -- it can only
+    change if the repo's catalog files themselves change."""
+    return fetch_live_landslide_history(lat, lon)
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def get_live_soil_type(lat: float, lon: float):
+    """Soil texture barely changes, so this is cached for a full day."""
+    return fetch_live_soil_type(lat, lon)
+
+
+@st.cache_data(show_spinner=False)
+def get_live_fault_distance(lat: float, lon: float):
+    """No network call (real GEM fault database is bundled locally), so
+    no ttl needed -- fault geometry doesn't change on human timescales."""
+    return fetch_live_fault_distance(lat, lon)
+
+
+@st.cache_data(show_spinner=False)
+def get_live_seismic_pga(lat: float, lon: float):
+    """No network call -- current official BIS zone classification is a
+    constant for this whole study region, only changes if BIS revises
+    the code again."""
+    return fetch_live_seismic_pga(lat, lon)
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def get_live_land_use(lat: float, lon: float):
+    return fetch_live_land_use(lat, lon)
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def get_live_population_density(lat: float, lon: float):
+    return fetch_live_population_density(lat, lon)
+
+
+@st.cache_data(show_spinner=False)
+def score_sample_points(map_df: pd.DataFrame, _model_a, _model_b) -> pd.DataFrame:
+    """Batch-scores the map's sample points once and caches the result, so
+    dragging the rain slider, ticking a checkbox, or tapping the map doesn't
+    silently re-run 150 individual model predictions on every rerun. The
+    leading underscore on _model_a/_model_b tells st.cache_data to key the
+    cache on map_df's contents only, not on the (unhashable) model objects."""
+    return score_table(map_df.copy(), _model_a, _model_b)
+
+
 def haversine_km(lat1, lon1, lat2, lon2):
     r = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -326,9 +408,25 @@ def main():
 
     model_a, model_b = get_models(args.model_a, args.model_b)
     df = get_features(args.features)
+    # Reference range for normalizing a live population_density estimate
+    # into the same 0-1-friendly scale exposure_index was trained on.
+    pop_density_min = float(df["population_density"].min())
+    pop_density_max = float(df["population_density"].max())
+
+    if "clicked_latlon" not in st.session_state:
+        st.session_state.clicked_latlon = None
 
     # --- Auto-detect the visitor's location, no typing required ------------
-    loc = get_geolocation()
+    # Only ask the browser once per session: get_geolocation() triggers a
+    # real GPS/network location fix, and re-running it on every widget
+    # interaction (slider drag, checkbox, map tap) is what was making every
+    # click feel slow. Cache the result and only re-ask if it hasn't
+    # resolved yet, or the user explicitly asks to refresh it.
+    if "geo_loc" not in st.session_state:
+        st.session_state.geo_loc = None
+    if st.session_state.geo_loc is None:
+        st.session_state.geo_loc = get_geolocation()
+    loc = st.session_state.geo_loc
 
     with st.sidebar:
         st.header("🔊 Voice alerts")
@@ -342,11 +440,35 @@ def main():
         st.caption("Slide to simulate a bigger or smaller storm on top of today's data.")
         rain_multiplier = st.slider("Rain intensity", 0.0, 3.0, 1.0, 0.1,
                                      format="%.1fx", label_visibility="collapsed")
+        use_live_rain = st.checkbox(
+            "Use live data (weather, soil, terrain, land use — not the synthetic dataset)",
+            value=True,
+            help="Fetches real rainfall/soil-moisture (Open-Meteo), real "
+                 "elevation/slope/aspect/road & river distance (Open-Meteo Elevation "
+                 "+ OpenStreetMap), real past-landslide density/distance (this "
+                 "project's own historical catalog), real soil type (ISRIC "
+                 "SoilGrids), and real land use & population density "
+                 "(OpenStreetMap) for the exact point you're checking -- plus a "
+                 "few more (sun exposure, freeze-thaw, root cohesion, exposure "
+                 "index) recomputed from those. Whatever a source can't provide "
+                 "(geology, vegetation index, seismic hazard, InSAR, etc.) still "
+                 "comes from the nearest synthetic sample point."
+        )
         st.divider()
 
         st.header("📍 Set a location")
         st.caption("Didn't get a location prompt, or want to check somewhere else? "
-                   "Set it manually below.")
+                   "Set it manually below, or tap anywhere on the map itself.")
+        if st.button("🔄 Refresh my live location"):
+            st.session_state.geo_loc = None
+            st.rerun()
+        if st.session_state.clicked_latlon:
+            lat_c, lon_c = st.session_state.clicked_latlon
+            st.info(f"📌 Showing the point you tapped on the map "
+                    f"({lat_c:.4f}, {lon_c:.4f}).")
+            if st.button("Clear map pin"):
+                st.session_state.clicked_latlon = None
+                st.rerun()
         manual = st.checkbox("Enter a location manually")
         manual_mode = None
         place_query = None
@@ -374,7 +496,19 @@ def main():
     user_latlon = None
     distance_note = ""
 
-    if manual_mode == "Type a place name" and place_query:
+    if st.session_state.clicked_latlon:
+        # Highest priority: the visitor just tapped an exact spot on the
+        # map to ask "what about here?" — that beats any earlier manual
+        # entry or auto-detected browser location.
+        lat, lon = st.session_state.clicked_latlon
+        user_latlon = (lat, lon)
+        nearest, dist_km = nearest_row(df, lat, lon)
+        base_row = nearest.to_dict()
+        distance_note = (
+            f"Showing risk for the exact point you tapped on the map "
+            f"(closest monitored point is {dist_km:.1f} km away)."
+        )
+    elif manual_mode == "Type a place name" and place_query:
         found = geocode_place_name(place_query)
         if found:
             lat, lon, matched_name = found
@@ -416,6 +550,86 @@ def main():
         st.info("📍 Detecting your location — allow location access if your browser asks...")
         st.stop()
 
+    # --- Swap in live data for this exact point, if enabled ----------------
+    # Whatever a live source can't provide (geology, NDVI, InSAR, TWI,
+    # glacial lake distance) still comes from the nearest synthetic
+    # sample point (base_row) -- everything else gets overwritten with
+    # real data, or recomputed from it.
+    if use_live_rain and user_latlon:
+        live_notes = []
+        live_rain = get_live_rainfall(round(user_latlon[0], 2), round(user_latlon[1], 2))
+        if live_rain:
+            base_row.update(live_rain)
+            live_notes.append("rainfall")
+        live_soil = get_live_soil_moisture(round(user_latlon[0], 2), round(user_latlon[1], 2))
+        if live_soil:
+            base_row.update(live_soil)
+            live_notes.append("soil moisture")
+        live_terrain = get_live_terrain(round(user_latlon[0], 3), round(user_latlon[1], 3))
+        if live_terrain:
+            base_row.update(live_terrain)
+            live_notes.append("terrain")
+        live_landslide_history = get_live_landslide_history(
+            round(user_latlon[0], 4), round(user_latlon[1], 4)
+        )
+        if live_landslide_history:
+            base_row.update(live_landslide_history)
+            live_notes.append("past-landslide history")
+        live_soil_type = get_live_soil_type(round(user_latlon[0], 2), round(user_latlon[1], 2))
+        if live_soil_type:
+            base_row.update(live_soil_type)
+            live_notes.append("soil type")
+        live_land_use = get_live_land_use(round(user_latlon[0], 3), round(user_latlon[1], 3))
+        if live_land_use:
+            base_row.update(live_land_use)
+            live_notes.append("land use")
+        live_population = get_live_population_density(
+            round(user_latlon[0], 2), round(user_latlon[1], 2)
+        )
+        if live_population:
+            base_row.update(live_population)
+            live_notes.append("population density")
+        live_fault = get_live_fault_distance(
+            round(user_latlon[0], 3), round(user_latlon[1], 3)
+        )
+        if live_fault:
+            base_row.update(live_fault)
+            live_notes.append("fault distance")
+        live_seismic = get_live_seismic_pga(
+            round(user_latlon[0], 3), round(user_latlon[1], 3)
+        )
+        if live_seismic:
+            base_row.update(live_seismic)
+            live_notes.append("seismic zone (IS 1893:2025)")
+
+        # These four are pure formulas over whatever's now in base_row
+        # (live where available, synthetic otherwise) -- see
+        # live_insolation.py / live_freeze_thaw.py / live_root_cohesion.py /
+        # live_exposure.py for why they reuse the dataset's own equations
+        # instead of a different live source, and why they can't fail.
+        if {"slope", "aspect"}.issubset(base_row):
+            base_row["insolation_proxy"] = compute_insolation_proxy(
+                base_row["slope"], base_row["aspect"]
+            )
+        if "elevation" in base_row:
+            base_row["freeze_thaw_index"] = compute_freeze_thaw_index(base_row["elevation"])
+        if "land_use" in base_row:
+            cohesion = compute_root_cohesion_proxy(base_row["land_use"], base_row.get("NDVI"))
+            if cohesion is not None:
+                base_row["root_cohesion_proxy"] = cohesion
+        if {"population_density", "road_distance"}.issubset(base_row):
+            base_row["exposure_index"] = compute_exposure_index(
+                base_row["population_density"], base_row["road_distance"],
+                pop_density_min, pop_density_max,
+            )
+
+        if live_notes:
+            distance_note = (distance_note + " " if distance_note else "") + \
+                f"🌍 Using live {', '.join(live_notes)} for this exact point."
+        else:
+            distance_note = (distance_note + " " if distance_note else "") + \
+                "⚠️ Live data unavailable right now — showing dataset values instead."
+
     # --- Score this location -------------------------------------------------
     scenario_row = dict(base_row)
     for col in ["rainfall_1d", "rainfall_3d", "rainfall_7d", "rainfall_15d", "rainfall_30d"]:
@@ -427,7 +641,10 @@ def main():
     ui = LEVEL_UI.get(level, LEVEL_UI["Moderate"])
 
     # --- Who/where: a real place name, not just raw coordinates ------------
-    location_name = get_location_name(*user_latlon)
+    # Round to ~110m before the reverse-geocode lookup so nearby map taps
+    # reuse the cache instead of firing a fresh (up to 4s) network call for
+    # every last-decimal-place difference in the click coordinates.
+    location_name = get_location_name(round(user_latlon[0], 3), round(user_latlon[1], 3))
     st.markdown(
         f"<p style='text-align:center; color:gray; margin-bottom:4px;'>📍 {location_name}</p>",
         unsafe_allow_html=True,
@@ -454,16 +671,22 @@ def main():
         st.markdown(f"📣 *{alert.message}*")
 
     st.markdown("#### 🗺️ Your area on the map")
-    st.caption("Green = safe, yellow = stay alert, orange = warning, red = leave the area.")
+    st.caption("Green = safe, yellow = stay alert, orange = warning, red = leave the area. "
+               "The blue crosshair pin is your exact point — tap anywhere else on the map "
+               "to check the risk there instead.")
     sample_size = min(len(df), 150)
     map_df = df.sample(sample_size, random_state=42) if len(df) > sample_size else df.copy()
-    scored_sample = pd.DataFrame([
-        {**row, **score_single_location(row, model_a, model_b)}
-        for row in map_df.to_dict("records")
-    ])
+    scored_sample = score_sample_points(map_df, model_a, model_b)
     fmap = build_friendly_map(scored_sample, user_location=user_latlon, user_risk_level=level,
                                user_location_name=location_name)
-    st.html(f'<div style="height:420px;">{fmap._repr_html_()}</div>', unsafe_allow_javascript=True)
+    map_state = st_folium(fmap, height=420, width=None, returned_objects=["last_clicked"],
+                           key="risk_map")
+    clicked = map_state.get("last_clicked") if map_state else None
+    if clicked:
+        new_latlon = (clicked["lat"], clicked["lng"])
+        if new_latlon != st.session_state.clicked_latlon:
+            st.session_state.clicked_latlon = new_latlon
+            st.rerun()
 
     # --- Everything technical is shown directly — nothing hidden -----------
     st.markdown("---")

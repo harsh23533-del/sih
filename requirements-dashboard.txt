@@ -18,4 +18,5 @@ shap==0.52.0
 folium==0.20.0
 plotly==7.0.0
 streamlit-js-eval==1.0.0
+streamlit-folium==0.24.0
 requests==2.33.1
