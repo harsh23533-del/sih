@@ -48,6 +48,7 @@ from live_insolation import compute_insolation_proxy  # noqa: E402
 from live_freeze_thaw import compute_freeze_thaw_index  # noqa: E402
 from live_root_cohesion import compute_root_cohesion_proxy  # noqa: E402
 from live_exposure import compute_exposure_index  # noqa: E402
+from live_fault_distance import fetch_live_fault_distance  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +229,13 @@ def get_live_landslide_history(lat: float, lon: float):
 def get_live_soil_type(lat: float, lon: float):
     """Soil texture barely changes, so this is cached for a full day."""
     return fetch_live_soil_type(lat, lon)
+
+
+@st.cache_data(show_spinner=False)
+def get_live_fault_distance(lat: float, lon: float):
+    """No network call (real GEM fault database is bundled locally), so
+    no ttl needed -- fault geometry doesn't change on human timescales."""
+    return fetch_live_fault_distance(lat, lon)
 
 
 @st.cache_data(show_spinner=False, ttl=86400)
@@ -493,9 +501,9 @@ def main():
 
     # --- Swap in live data for this exact point, if enabled ----------------
     # Whatever a live source can't provide (geology, NDVI, seismic hazard,
-    # fault distance, InSAR, TWI, glacial lake distance) still comes from
-    # the nearest synthetic sample point (base_row) -- everything else
-    # gets overwritten with real data, or recomputed from it.
+    # InSAR, TWI, glacial lake distance) still comes from the nearest
+    # synthetic sample point (base_row) -- everything else gets
+    # overwritten with real data, or recomputed from it.
     if use_live_rain and user_latlon:
         live_notes = []
         live_rain = get_live_rainfall(round(user_latlon[0], 2), round(user_latlon[1], 2))
@@ -530,6 +538,12 @@ def main():
         if live_population:
             base_row.update(live_population)
             live_notes.append("population density")
+        live_fault = get_live_fault_distance(
+            round(user_latlon[0], 3), round(user_latlon[1], 3)
+        )
+        if live_fault:
+            base_row.update(live_fault)
+            live_notes.append("fault distance")
 
         # These four are pure formulas over whatever's now in base_row
         # (live where available, synthetic otherwise) -- see

@@ -82,7 +82,7 @@ real source listed once available:
 |---|---|---|
 | `soil` | Soil type (rocky/sandy/loamy/clayey) | Bhuvan / NBSS&LUP soil maps |
 | `geology` | Lithology (rock type) | GSI geology maps |
-| `fault_distance_km` | Distance to nearest active fault | GSI active fault database |
+| `fault_distance_km` | Distance to nearest active fault | **Live** — GEM Foundation Global Active Faults Database (`dashboard/live_fault_distance.py`), clipped to the NER/Himalaya region |
 | `seismic_pga` | Earthquake shaking intensity proxy | BIS seismic zonation (NER is mostly Zone V) / NDMA |
 | `NDVI` | Vegetation cover | Sentinel-2 (Copernicus) / Bhuvan |
 | `land_use` | Forest / agriculture / urban / barren | Bhuvan or Sentinel-2 LULC products |
