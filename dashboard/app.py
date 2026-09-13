@@ -27,6 +27,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_js_eval import get_geolocation
 from streamlit_folium import st_folium
 
@@ -418,10 +419,30 @@ def rainfall_chart(row: dict) -> go.Figure:
     return fig
 
 
+_HERO_URL = "https://harsh23533-del.github.io/sih/frontend/landslide-3d-hero.html"
+
+
+def render_hero_banner():
+    """External iframe (src=, not srcdoc) pointing at the live GitHub
+    Pages copy of the 3D hero. Two earlier attempts to inline the HTML
+    directly (components.html with a raw markup string, and an st.html
+    version) both rendered as a blank/black box -- most likely because
+    Streamlit's components.html injects markup via srcdoc inside a
+    sandboxed iframe, which can block WebGL context creation even
+    though the script itself runs. An iframe with a real src= is a
+    normal, unsandboxed browsing context, so it doesn't hit that
+    restriction. If GitHub Pages/the network is ever unreachable, the
+    iframe will just show its own browser error rather than crashing
+    the app -- st.components.v1.iframe doesn't raise on a bad URL."""
+    components.iframe(_HERO_URL, height=420, scrolling=False)
+
+
 def main():
     args = parse_cli_args()
     st.set_page_config(page_title="Landslide Early Warning", layout="centered",
                         page_icon="⛰️")
+
+    render_hero_banner()
 
     st.markdown(
         "<h2 style='margin-bottom:0;'>⛰️ Landslide Early Warning</h2>"
