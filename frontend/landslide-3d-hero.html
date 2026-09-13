@@ -110,11 +110,11 @@
     <p>Terrain, rainfall, and fault data are checked against your location continuously — this is a live distance to the nearest tracked slide, not a snapshot.</p>
   </div>
 
-  <div class="footline">lat 26.2649°N, lon 82.0721°E<br/><span>Sultanpur, Uttar Pradesh</span></div>
+  <div class="footline" id="footline">locating…</div>
 
   <svg class="chevron" viewBox="0 0 24 24" fill="none"><path d="M4 9l8 8 8-8" stroke="#EDE7DD" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
 
-  <div id="pillUser" class="pill" style="--pc:var(--safe)"><b>Sultanpur</b> — your live location</div>
+  <div id="pillUser" class="pill" style="--pc:var(--safe)"><b>Locating…</b></div>
   <div id="pillHazard" class="pill wrap" style="--pc:var(--hazard)"><b>Nearest tracked slide</b> · Balia Nala, Nainital · <span id="distVal">—</span> km away</div>
   <div id="lineUser" class="pill-line"></div>
   <div id="lineHazard" class="pill-line"></div>
@@ -124,15 +124,63 @@
 <script>
 (function(){
 
-// ---------- live distance (haversine, computed, not hardcoded) ----------
+// ---------- real live location (no hardcoded place) ----------
+const HAZARD_LAT = 29.3919, HAZARD_LON = 79.4542; // Balia Nala, Nainital -- reference tracked slide
+const pillUser = document.getElementById('pillUser');
+const footline = document.getElementById('footline');
+const distVal = document.getElementById('distVal');
+
 function haversine(lat1,lon1,lat2,lon2){
   const R=6371, toRad=d=>d*Math.PI/180;
   const dphi=toRad(lat2-lat1), dlmb=toRad(lon2-lon1);
   const a=Math.sin(dphi/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dlmb/2)**2;
   return 2*R*Math.asin(Math.sqrt(a));
 }
-const dist = Math.round(haversine(26.2649,82.0721, 29.3919,79.4542));
-document.getElementById('distVal').textContent = dist;
+
+async function reverseGeocode(lat, lon){
+  try{
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10`,
+      { headers: { 'Accept': 'application/json' } }
+    );
+    if(!res.ok) throw new Error('reverse geocode failed');
+    const data = await res.json();
+    const a = data.address || {};
+    const place = a.city || a.town || a.village || a.county || a.state_district || 'Your location';
+    const state = a.state || '';
+    return state ? `${place}, ${state}` : place;
+  }catch(e){
+    return null;
+  }
+}
+
+function setUserLocation(lat, lon, label){
+  const dist = Math.round(haversine(lat, lon, HAZARD_LAT, HAZARD_LON));
+  distVal.textContent = dist;
+  pillUser.innerHTML = `<b>${label}</b> — your live location`;
+  footline.innerHTML = `lat ${lat.toFixed(4)}°N, lon ${lon.toFixed(4)}°E<br/><span>${label}</span>`;
+}
+
+function setUserLocationUnavailable(){
+  pillUser.innerHTML = `<b>Location unavailable</b> — allow access to see live distance`;
+  footline.textContent = 'location access not granted';
+  distVal.textContent = '—';
+}
+
+if('geolocation' in navigator){
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      const { latitude, longitude } = pos.coords;
+      const label = (await reverseGeocode(latitude, longitude)) || `${latitude.toFixed(2)}°N, ${longitude.toFixed(2)}°E`;
+      setUserLocation(latitude, longitude, label);
+      window.__liveLat = latitude; window.__liveLon = longitude;
+    },
+    () => setUserLocationUnavailable(),
+    { enableHighAccuracy:false, timeout:8000, maximumAge:300000 }
+  );
+} else {
+  setUserLocationUnavailable();
+}
 
 // ---------- three.js scene ----------
 const mount = document.getElementById('scene');
@@ -255,7 +303,6 @@ const mistMat = new THREE.PointsMaterial({ color:0x9BA3B4, size:0.55, transparen
 scene.add(new THREE.Points(mistGeo, mistMat));
 
 // ---------- screen-space projection for the HTML pills ----------
-const pillUser = document.getElementById('pillUser');
 const pillHazard = document.getElementById('pillHazard');
 const lineUser = document.getElementById('lineUser');
 const lineHazard = document.getElementById('lineHazard');
