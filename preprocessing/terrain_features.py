@@ -17,7 +17,7 @@ from scipy.ndimage import sobel, generic_filter
 
 
 class TerrainExtractor:
-    def __init__(self, dem_path: str):
+    def __init__(self, dem_path: str, twi_path: str = None, drainage_path: str = None):
         self.src = rasterio.open(dem_path)
         self.elevation = self.src.read(1).astype(float)
         self.elevation[self.elevation < -1000] = np.nan  # mask nodata/voids
@@ -28,6 +28,14 @@ class TerrainExtractor:
         self.px_size_y = abs(self.src.transform.e)
 
         self._compute_derivatives()
+
+        # TWI + drainage distance are precomputed rasters (see
+        # hydrology_features.py / generate_synthetic_data.py) sampled the
+        # same way as everything else, rather than recomputed per-point.
+        self._twi_src = rasterio.open(twi_path) if twi_path else None
+        self._twi = self._twi_src.read(1) if self._twi_src else None
+        self._drainage_src = rasterio.open(drainage_path) if drainage_path else None
+        self._drainage = self._drainage_src.read(1) if self._drainage_src else None
 
     def _compute_derivatives(self):
         dz_dx = sobel(self.elevation, axis=1) / (8 * self.px_size_x)
@@ -58,7 +66,7 @@ class TerrainExtractor:
     def sample(self, lat: float, lon: float) -> dict:
         row, col = self._rowcol(lat, lon)
         try:
-            return {
+            result = {
                 "elevation": float(self.elevation[row, col]),
                 "slope": float(self.slope_deg[row, col]),
                 "aspect": float(self.aspect_deg[row, col]),
@@ -66,10 +74,21 @@ class TerrainExtractor:
                 "ruggedness_tri": float(self.tri[row, col]),
             }
         except IndexError:
-            return {
+            result = {
                 "elevation": np.nan, "slope": np.nan, "aspect": np.nan,
                 "curvature": np.nan, "ruggedness_tri": np.nan,
             }
+        if self._twi is not None:
+            try:
+                result["twi"] = float(self._twi[row, col])
+            except IndexError:
+                result["twi"] = np.nan
+        if self._drainage is not None:
+            try:
+                result["drainage_distance_km"] = float(self._drainage[row, col])
+            except IndexError:
+                result["drainage_distance_km"] = np.nan
+        return result
 
 
 if __name__ == "__main__":

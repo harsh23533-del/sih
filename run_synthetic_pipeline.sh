@@ -24,6 +24,8 @@ echo "== 3/6: Building final feature table =="
   --positives ../data/historical_landslides/coolr_ner_labeled.csv \
   --negatives ../data/processed/negative_samples.csv \
   --dem ../data/terrain/sikkim_srtm30m.tif \
+  --twi ../data/terrain/sikkim_twi.tif \
+  --drainage ../data/terrain/sikkim_drainage_distance.tif \
   --rainfall-dir ../data/rainfall \
   --osm-roads ../data/infrastructure/sikkim_osm.geojson \
   --soil ../data/soil_geology/sikkim_soil.tif \
@@ -33,6 +35,10 @@ echo "== 3/6: Building final feature table =="
   --faults ../data/soil_geology/sikkim_faults.geojson \
   --ndvi ../data/satellite/sikkim_ndvi.tif \
   --landuse ../data/satellite/sikkim_landuse.tif \
+  --sat-moisture ../data/satellite/sikkim_soil_moisture_sat.tif \
+  --insar ../data/satellite/sikkim_insar_deformation.tif \
+  --population ../data/infrastructure/sikkim_population_density.tif \
+  --glacial-lakes ../data/historical_landslides/sikkim_glacial_lakes.geojson \
   --out ../data/processed/final_feature_table.csv)
 
 echo "== 4/6: Training Model A (susceptibility) =="

@@ -24,6 +24,7 @@ import sys
 
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 from streamlit_js_eval import get_geolocation
 
@@ -81,6 +82,17 @@ FRIENDLY_FACTORS = {
     "soil_moisture_index": ("how saturated the ground is right now", "💧"),
     "insolation_proxy": ("how much direct sun this slope gets", "☀️"),
     "freeze_thaw_index": ("how much the ground freezes and thaws", "❄️"),
+    "rainfall_intensity_mm_hr": ("how hard it's raining right now", "⛈️"),
+    "rainfall_forecast_24h": ("rain expected in the next day", "🔮"),
+    "rainfall_forecast_48h": ("rain expected in the next 2 days", "🔮"),
+    "twi": ("how much water this spot collects", "💦"),
+    "drainage_distance_km": ("distance to the nearest stream", "🏞️"),
+    "soil_moisture_satellite": ("satellite-measured ground wetness", "🛰️"),
+    "insar_deformation_mm_yr": ("how much the ground is slowly shifting", "📡"),
+    "root_cohesion_proxy": ("how well tree roots hold the soil together", "🌲"),
+    "glacial_lake_distance_km": ("distance to the nearest glacial lake", "🏔️"),
+    "population_density": ("how many people live nearby", "🏘️"),
+    "exposure_index": ("how many people/places could be affected", "🏘️"),
 }
 
 
@@ -95,6 +107,34 @@ CATEGORY_LABELS = {
 
 def friendly_name(col: str) -> tuple:
     return FRIENDLY_FACTORS.get(col, (col.replace("_", " "), "•"))
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def get_location_name(lat: float, lon: float) -> str:
+    """Reverse-geocode via OpenStreetMap's free Nominatim API — no key
+    needed. Cached per rounded coordinate (both to be a good citizen of a
+    free public service, and since re-querying the same spot is pointless).
+    Falls back to plain coordinates if the service is unreachable or slow,
+    so a network hiccup never breaks the page."""
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={"format": "json", "lat": lat, "lon": lon, "zoom": 14, "addressdetails": 1},
+            headers={"User-Agent": "landslide-early-warning-dashboard/1.0"},
+            timeout=4,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        addr = data.get("address", {})
+        parts = [
+            addr.get("village") or addr.get("town") or addr.get("city") or addr.get("suburb"),
+            addr.get("county") or addr.get("state_district"),
+            addr.get("state"),
+        ]
+        name = ", ".join(p for p in parts if p)
+        return name or data.get("display_name", f"{lat:.3f}, {lon:.3f}")
+    except Exception:
+        return f"{lat:.3f}, {lon:.3f}"
 
 
 def parse_cli_args():
@@ -279,6 +319,13 @@ def main():
     level = result["risk_level"]
     ui = LEVEL_UI.get(level, LEVEL_UI["Moderate"])
 
+    # --- Who/where: a real place name, not just raw coordinates ------------
+    location_name = get_location_name(*user_latlon)
+    st.markdown(
+        f"<p style='text-align:center; color:gray; margin-bottom:4px;'>📍 {location_name}</p>",
+        unsafe_allow_html=True,
+    )
+
     # --- Front screen: just the color + plain notation, nothing technical ---
     status_card(level, extra_note=distance_note)
 
@@ -302,7 +349,8 @@ def main():
         {**row, **score_single_location(row, model_a, model_b)}
         for row in map_df.to_dict("records")
     ])
-    fmap = build_friendly_map(scored_sample, user_location=user_latlon, user_risk_level=level)
+    fmap = build_friendly_map(scored_sample, user_location=user_latlon, user_risk_level=level,
+                               user_location_name=location_name)
     st.html(f'<div style="height:420px;">{fmap._repr_html_()}</div>', unsafe_allow_javascript=True)
 
     # --- Everything technical stays hidden until someone actually asks -----
@@ -334,10 +382,12 @@ def main():
             st.info("No clear standout factor for this location.")
 
         st.markdown("**Terrain & environment at this location**")
-        env_cols = [c for c in ["elevation", "slope", "aspect", "curvature", "road_distance",
+        env_cols = [c for c in ["elevation", "slope", "aspect", "road_distance",
                                  "historical_landslide_density", "soil", "geology", "NDVI",
                                  "land_use", "seismic_pga", "fault_distance_km",
-                                 "soil_moisture_index", "insolation_proxy", "freeze_thaw_index"]
+                                 "soil_moisture_index", "insolation_proxy", "freeze_thaw_index",
+                                 "twi", "drainage_distance_km", "root_cohesion_proxy",
+                                 "glacial_lake_distance_km", "population_density"]
                     if c in base_row]
         friendly_env = {}
         for c in env_cols:

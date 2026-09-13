@@ -5,9 +5,13 @@ feature extraction on all of them, cleans missing values, and writes the final
 combined training table matching the schema from the project plan:
 
 latitude, longitude, date, rainfall_1d, rainfall_3d, rainfall_7d, rainfall_15d,
-rainfall_30d, elevation, slope, aspect, curvature, soil, geology, NDVI,
-land_use, seismic_pga, fault_distance_km, soil_moisture_index, insolation_proxy,
-freeze_thaw_index, road_distance, drainage_distance, historical_landslide_density, label
+rainfall_30d, rainfall_intensity_mm_hr, rainfall_forecast_24h, rainfall_forecast_48h,
+elevation, slope, aspect, curvature, twi, drainage_distance_km,
+soil, geology, NDVI, land_use, seismic_pga, fault_distance_km,
+soil_moisture_index, soil_moisture_satellite, insar_deformation_mm_yr,
+insolation_proxy, freeze_thaw_index, root_cohesion_proxy,
+road_distance, historical_landslide_density, glacial_lake_distance_km,
+population_density, exposure_index, label
 
 Run this AFTER:
   1. negative_sampling.py        -> negative_samples.csv
@@ -22,6 +26,8 @@ Usage:
         --positives ../data/historical_landslides/coolr_ner_labeled.csv \\
         --negatives ../data/processed/negative_samples.csv \\
         --dem ../data/terrain/sikkim_srtm30m.tif \\
+        --twi ../data/terrain/sikkim_twi.tif \\
+        --drainage ../data/terrain/sikkim_drainage_distance.tif \\
         --rainfall-dir ../data/rainfall \\
         --osm-roads ../data/infrastructure/sikkim_osm.geojson \\
         --soil ../data/soil_geology/sikkim_soil.tif \\
@@ -31,6 +37,10 @@ Usage:
         --faults ../data/soil_geology/sikkim_faults.geojson \\
         --ndvi ../data/satellite/sikkim_ndvi.tif \\
         --landuse ../data/satellite/sikkim_landuse.tif \\
+        --sat-moisture ../data/satellite/sikkim_soil_moisture_sat.tif \\
+        --insar ../data/satellite/sikkim_insar_deformation.tif \\
+        --population ../data/infrastructure/sikkim_population_density.tif \\
+        --glacial-lakes ../data/historical_landslides/sikkim_glacial_lakes.geojson \\
         --out ../data/processed/final_feature_table.csv
 """
 import argparse
@@ -55,11 +65,15 @@ def clean_missing(df: pd.DataFrame) -> pd.DataFrame:
     # since dropping would bias the (already rare) positive class
     numeric_cols = [
         "elevation", "slope", "aspect", "curvature", "ruggedness_tri",
+        "twi", "drainage_distance_km",
         "rainfall_1d", "rainfall_3d", "rainfall_7d", "rainfall_15d", "rainfall_30d",
+        "rainfall_intensity_mm_hr", "rainfall_forecast_24h", "rainfall_forecast_48h",
         "road_distance", "historical_landslide_density",
         "soil", "geology", "NDVI", "land_use", "seismic_pga",
         "fault_distance_km", "soil_moisture_baseline",
         "insolation_proxy", "freeze_thaw_index", "soil_moisture_index",
+        "soil_moisture_satellite", "insar_deformation_mm_yr", "root_cohesion_proxy",
+        "population_density", "exposure_index", "glacial_lake_distance_km",
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -84,14 +98,14 @@ def main(args):
     combined = pd.concat([pos_df, neg_df], ignore_index=True)
     print(f"Combined {len(pos_df)} positives + {len(neg_df)} negatives = {len(combined)} rows")
 
-    # 1. Terrain features
-    te = TerrainExtractor(args.dem)
+    # 1. Terrain features (+ TWI / drainage distance, if provided)
+    te = TerrainExtractor(args.dem, twi_path=args.twi, drainage_path=args.drainage)
     terrain_feats = combined.apply(
         lambda r: te.sample(r["latitude"], r["longitude"]), axis=1, result_type="expand"
     )
     combined = pd.concat([combined, terrain_feats], axis=1)
 
-    # 2. Rainfall window features
+    # 2. Rainfall window + intensity + forecast features
     rf = RainfallExtractor(args.rainfall_dir)
     rain_feats = combined.apply(
         lambda r: rf.sample(r["latitude"], r["longitude"], r["date"]), axis=1, result_type="expand"
@@ -107,17 +121,21 @@ def main(args):
     combined = add_road_distance(combined, args.osm_roads)
 
     # 5. Soil / geology / NDVI / land use / seismic / moisture / fault distance
+    #    (+ satellite moisture / InSAR / population / glacial lakes, if provided)
     env = EnvironmentalExtractor(
         soil_path=args.soil, geology_path=args.geology, ndvi_path=args.ndvi,
         landuse_path=args.landuse, seismic_path=args.seismic,
         moisture_path=args.moisture, faults_path=args.faults,
+        sat_moisture_path=args.sat_moisture, insar_path=args.insar,
+        population_path=args.population, glacial_lakes_path=args.glacial_lakes,
     )
     env_feats = combined.apply(
         lambda r: env.sample(r["latitude"], r["longitude"]), axis=1, result_type="expand"
     )
     combined = pd.concat([combined, env_feats], axis=1)
 
-    # 6. Derived environmental features (insolation, freeze-thaw, dynamic soil moisture)
+    # 6. Derived environmental features (insolation, freeze-thaw, dynamic soil
+    #    moisture, root cohesion, exposure index)
     combined = add_derived_environmental_features(combined)
 
     # 7. Clean
@@ -126,12 +144,16 @@ def main(args):
     final_cols = [
         "latitude", "longitude", "date",
         "rainfall_1d", "rainfall_3d", "rainfall_7d", "rainfall_15d", "rainfall_30d",
+        "rainfall_intensity_mm_hr", "rainfall_forecast_24h", "rainfall_forecast_48h",
         "elevation", "slope", "aspect", "curvature", "ruggedness_tri",
+        "twi", "drainage_distance_km",
         "soil", "geology", "NDVI", "land_use",
         "seismic_pga", "fault_distance_km",
-        "soil_moisture_baseline", "soil_moisture_index",
-        "insolation_proxy", "freeze_thaw_index",
+        "soil_moisture_baseline", "soil_moisture_index", "soil_moisture_satellite",
+        "insar_deformation_mm_yr",
+        "insolation_proxy", "freeze_thaw_index", "root_cohesion_proxy",
         "road_distance", "historical_landslide_density", "distance_to_nearest_landslide_m",
+        "glacial_lake_distance_km", "population_density", "exposure_index",
         "label",
     ]
     combined = combined[[c for c in final_cols if c in combined.columns]]
@@ -145,6 +167,8 @@ if __name__ == "__main__":
     parser.add_argument("--positives", required=True)
     parser.add_argument("--negatives", required=True)
     parser.add_argument("--dem", required=True)
+    parser.add_argument("--twi", default=None)
+    parser.add_argument("--drainage", default=None)
     parser.add_argument("--rainfall-dir", required=True)
     parser.add_argument("--osm-roads", required=True)
     parser.add_argument("--soil", required=True)
@@ -154,6 +178,10 @@ if __name__ == "__main__":
     parser.add_argument("--seismic", required=True)
     parser.add_argument("--moisture", required=True)
     parser.add_argument("--faults", required=True)
+    parser.add_argument("--sat-moisture", default=None)
+    parser.add_argument("--insar", default=None)
+    parser.add_argument("--population", default=None)
+    parser.add_argument("--glacial-lakes", default=None)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     main(args)

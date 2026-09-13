@@ -121,14 +121,14 @@ def _friendly_popup_html(row: pd.Series) -> str:
 
 
 def build_friendly_map(scored_df: pd.DataFrame, user_location: tuple = None,
-                        user_risk_level: str = None, center=NER_CENTER,
-                        zoom=NER_DEFAULT_ZOOM) -> folium.Map:
+                        user_risk_level: str = None, user_location_name: str = None,
+                        center=NER_CENTER, zoom=NER_DEFAULT_ZOOM) -> folium.Map:
     """A stripped-down, plain-language map for non-technical users: soft
     basemap, emoji + one-word status per point (no raw numbers), a simple
-    color legend, and — if given — a highlighted pin for the user's own
-    detected location."""
+    color legend, and — if given — a highlighted, named pin for the user's
+    own detected location."""
     center = user_location if user_location else center
-    zoom = 11 if user_location else zoom
+    zoom = 13 if user_location else zoom
     # Plain OpenStreetMap tiles — no API key required, unlike CartoDB's
     # basemaps which now need one.
     fmap = folium.Map(location=center, zoom_start=zoom, tiles="OpenStreetMap")
@@ -167,13 +167,14 @@ def build_friendly_map(scored_df: pd.DataFrame, user_location: tuple = None,
 
     if user_location:
         color, emoji, label = FRIENDLY_LEVELS.get(user_risk_level, ("#1565c0", "📍", "Your location"))
+        name_line = f"<br>{user_location_name}" if user_location_name else ""
         folium.Marker(
             location=user_location,
             icon=folium.Icon(color="blue", icon="user", prefix="fa"),
             popup=folium.Popup(
-                f'<div style="text-align:center; font-size:14px;"><b>You are here</b><br>'
-                f'{emoji} {label}</div>', max_width=160),
-            tooltip="You are here",
+                f'<div style="text-align:center; font-size:14px;"><b>You are here</b>'
+                f'{name_line}<br>{emoji} {label}</div>', max_width=200),
+            tooltip=user_location_name or "You are here",
         ).add_to(fmap)
 
     return fmap

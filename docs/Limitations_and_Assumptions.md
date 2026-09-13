@@ -96,3 +96,32 @@ model-comparison reports' near-perfect scores, which reflect an easy synthetic
 signal, not real-world skill). The real gain from these factors comes only once
 they're swapped for their real sources above — soil, geology, and NDVI/land-use are
 the three the landslide-susceptibility literature weights most heavily.
+
+## Second round: hydrology, forecast rainfall, InSAR, exposure (per follow-up review)
+
+Added on top of the first round of environmental factors, closing the remaining
+gaps from a standard landslide-susceptibility factor checklist:
+
+| Feature | What it captures | Real-data source to swap in |
+|---|---|---|
+| `twi` | Topographic Wetness Index — where water accumulates, computed from a D8 flow-accumulation on the DEM itself | Computed the same way from a real DEM — no swap needed |
+| `drainage_distance_km` | Distance to the nearest stream (bank erosion/undercutting risk) | Same — derived from the real DEM |
+| `rainfall_intensity_mm_hr` | Peak-hour rainfall intensity, not just daily totals | IMD sub-daily/AWS gauge data |
+| `rainfall_forecast_24h`, `rainfall_forecast_48h` | Look-ahead rainfall (early-warning needs a forecast, not just history) | IMD-NWP or ECMWF/OpenWeather forecast API |
+| `soil_moisture_satellite` | Remote-sensing soil moisture, distinct from the ground-based baseline | ISRO Bhuvan / NASA SMAP |
+| `insar_deformation_mm_yr` | Slow ground movement — a precursor signal, before a visible landslide | ISRO NISAR (upcoming) / ESA Sentinel-1 InSAR |
+| `glacial_lake_distance_km` | GLOF (glacial lake outburst flood) proximity — a distinct hazard mechanism from rainfall-triggered failure (see South Lhonak 2023 in `known_events_sikkim.csv`) | GSI/ICIMOD glacial lake inventory |
+| `root_cohesion_proxy` | How well vegetation roots bind the soil — derived from land_use + NDVI | Could be refined with species-level root-strength data if available |
+| `population_density`, `exposure_index` | The "who's affected" half of Risk = Hazard x Exposure x Vulnerability — this pipeline otherwise only scores hazard/susceptibility, not impact | WorldPop / Census of India gridded population |
+
+The DEM resolution was also bumped from a 300x300 to a 400x400 synthetic grid
+(finer effective resolution) per the same review.
+
+**Known pre-existing scale issue (not introduced by this round):** `terrain_features.py`
+computes slope/curvature assuming the DEM's pixel size is in meters, but the
+synthetic DEM's GeoTIFF transform is in degrees (geographic CRS) — so slope
+saturates near 90 deg and curvature shows an inflated raw magnitude. This doesn't
+break the pipeline (tree models still split on the (mis-scaled but still
+monotonic) signal), but should be fixed by reprojecting the DEM to a metric CRS
+(e.g. UTM 45N for Sikkim) before computing derivatives, ideally alongside the
+real-DEM swap-in.

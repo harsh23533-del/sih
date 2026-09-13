@@ -80,6 +80,13 @@ def main(args):
     # so it belongs with Model B's near-term hazard signal, not just Model A.
     if "soil_moisture_index" in df.columns:
         dynamic_features.append("soil_moisture_index")
+    # Rainfall intensity + forecast, and InSAR ground deformation, are all
+    # genuinely near-term/dynamic signals — they belong here, not in the
+    # static susceptibility model.
+    for extra in ["rainfall_intensity_mm_hr", "rainfall_forecast_24h",
+                  "rainfall_forecast_48h", "insar_deformation_mm_yr"]:
+        if extra in df.columns:
+            dynamic_features.append(extra)
     df = df.dropna(subset=dynamic_features + ["label"])
     print(f"Training Model B on {len(df)} rows, {df['label'].sum()} positive, "
           f"{len(dynamic_features)} dynamic features: {dynamic_features}")

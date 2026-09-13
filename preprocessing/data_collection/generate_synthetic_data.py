@@ -19,12 +19,30 @@ Produces files in the exact formats the downstream scripts expect:
   data/satellite/sikkim_ndvi.tif              (vegetation index, 0-1)
   data/satellite/sikkim_landuse.tif           (land use/cover, categorical)
 
+  -- second round: hydrology, forecast/intensity rainfall, InSAR, exposure --
+  data/terrain/sikkim_twi.tif                    (Topographic Wetness Index)
+  data/terrain/sikkim_drainage_distance.tif      (distance to nearest stream, km)
+  data/satellite/sikkim_soil_moisture_sat.tif    (satellite soil-moisture proxy)
+  data/satellite/sikkim_insar_deformation.tif    (ground deformation, mm/yr)
+  data/historical_landslides/sikkim_glacial_lakes.geojson (GLOF risk points)
+  data/infrastructure/sikkim_population_density.tif       (exposure layer)
+  rainfall NetCDFs now also carry a per-day "peak_intensity_frac" variable,
+  used to derive rainfall_intensity_mm_hr, plus rainfall_forecast_24h/48h are
+  computed at feature-build time by looking ahead in the same time series
+  (with injected forecast error) — standing in for a real NWP rainfall
+  forecast product.
+
 Real-data swap-in map (see docs/Limitations_and_Assumptions.md):
   soil/geology       -> Bhuvan / GSI geology & soil maps
   seismic PGA        -> BIS seismic zonation (NER is mostly Zone V) / NDMA
   soil moisture       -> CGWB groundwater level data + antecedent rainfall
   NDVI / land use    -> Sentinel-2 (Copernicus) or Bhuvan LULC products
   fault_distance      -> GSI active fault database
+  TWI / drainage      -> derived from a real DEM the same way (no swap needed)
+  rainfall intensity/forecast -> IMD sub-daily gauges / IMD-NWP or ECMWF forecast API
+  satellite soil moisture -> ISRO Bhuvan / NASA SMAP
+  InSAR deformation   -> ISRO NISAR (upcoming) / ESA Sentinel-1 InSAR products
+  population density  -> WorldPop / Census of India gridded population
 
 This is clearly synthetic (random terrain + rainfall + a hand-placed set of
 "landslide" points biased toward steep synthetic slopes so the model has a
@@ -45,12 +63,16 @@ import rasterio
 from rasterio.transform import from_origin
 from scipy.ndimage import gaussian_filter, distance_transform_edt
 
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from hydrology_features import compute_flow_accumulation, compute_twi, compute_drainage_distance_km
+
 SIKKIM_BBOX = dict(south=27.00, north=28.13, west=88.00, east=88.93)
 YEARS = list(range(2018, 2025))
 N_POSITIVES = 120
 
 
-def make_dem(out_path: str, seed: int = 0, size: int = 300):
+def make_dem(out_path: str, seed: int = 0, size: int = 400):
     rng = np.random.default_rng(seed)
     b = SIKKIM_BBOX
 
@@ -100,14 +122,27 @@ def make_rainfall(out_dir: str, seed: int = 1, grid: int = 15):
         spatial_noise = rng.normal(1.0, 0.15, size=(len(dates), grid, grid)).clip(0.3, 2.0)
         data = daily[:, None, None] * spatial_noise
 
+        # Peak-hour intensity fraction: what share of the day's total rain
+        # fell in its single heaviest hour. Monsoon convective bursts run
+        # higher than steady winter drizzle — this is what lets us derive
+        # rainfall_intensity_mm_hr downstream instead of only daily totals.
+        monsoon_mask = np.isin(month, [6, 7, 8, 9])
+        peak_frac_mean = np.where(monsoon_mask, 0.28, 0.16)
+        peak_frac = rng.beta(a=4, b=8, size=(len(dates), grid, grid))
+        peak_frac = (peak_frac * (peak_frac_mean[:, None, None] / 0.27)).clip(0.05, 0.6)
+
         import xarray as xr
         ds = xr.Dataset(
-            {"rain": (["time", "lat", "lon"], data)},
+            {
+                "rain": (["time", "lat", "lon"], data),
+                "peak_intensity_frac": (["time", "lat", "lon"], peak_frac),
+            },
             coords={"time": dates, "lat": lats, "lon": lons},
         )
         out_path = os.path.join(out_dir, f"sikkim_rainfall_{year}.nc")
         ds.to_netcdf(out_path)
-    print(f"Synthetic rainfall NetCDFs saved -> {out_dir}/sikkim_rainfall_{{2018..2024}}.nc")
+    print(f"Synthetic rainfall NetCDFs saved -> {out_dir}/sikkim_rainfall_{{2018..2024}}.nc "
+          f"(with rain + peak_intensity_frac variables)")
 
 
 def make_roads(out_path: str, seed: int = 2, n_roads: int = 40):
@@ -267,13 +302,19 @@ def make_soil_geology(out_dir: str, elevation: np.ndarray, transform, seed: int 
     for fname, arr, dtype in transforms_and_arrays:
         _write_raster(os.path.join(out_dir, fname), arr, transform, dtype)
     print(f"Synthetic soil/geology/seismic/moisture rasters saved -> {out_dir}/")
+    return geology
 
 
-def make_satellite(out_dir: str, elevation: np.ndarray, transform, seed: int = 30):
+def make_satellite(out_dir: str, elevation: np.ndarray, transform, geology: np.ndarray,
+                    seed: int = 30):
     """NDVI (vegetation) + land use/cover, correlated with elevation (alpine
     zone above ~3500m is sparsely vegetated) with a few random
     deforestation/agriculture/urban patches layered on top, standing in
-    for a real Sentinel-2 / Bhuvan LULC extraction."""
+    for a real Sentinel-2 / Bhuvan LULC extraction. Also writes the
+    satellite soil-moisture and InSAR ground-deformation layers, which
+    both need the same elevation/geology inputs.
+
+    Returns the land_use array (needed downstream for population density)."""
     rng = np.random.default_rng(seed)
     size = elevation.shape[0]
 
@@ -307,6 +348,114 @@ def make_satellite(out_dir: str, elevation: np.ndarray, transform, seed: int = 3
     print(f"Synthetic NDVI + land-use rasters saved -> {out_dir}/ "
           f"(land use codes: 1=Forest 2=Agriculture 3=Urban 4=Barren/Snow)")
 
+    from scipy.ndimage import sobel
+    px_size_x = abs(transform.a)
+    px_size_y = abs(transform.e)
+    dz_dx = sobel(elevation, axis=1) / (8 * px_size_x)
+    dz_dy = sobel(elevation, axis=0) / (8 * px_size_y)
+    slope_deg = np.degrees(np.arctan(np.sqrt(dz_dx ** 2 + dz_dy ** 2)))
+
+    deformation, sat_moisture = make_insar_and_satellite_moisture(elevation, geology, slope_deg)
+    _write_raster(os.path.join(out_dir, "sikkim_insar_deformation.tif"), deformation,
+                   transform, "float32")
+    _write_raster(os.path.join(out_dir, "sikkim_soil_moisture_sat.tif"), sat_moisture,
+                   transform, "float32")
+    print(f"Synthetic InSAR deformation + satellite soil-moisture rasters saved -> {out_dir}/")
+
+    return landuse
+
+
+def make_hydrology(terrain_dir: str, dem_path: str, elevation: np.ndarray, transform):
+    """TWI + drainage distance, purely derived from the DEM already
+    generated — no extra external data source needed, real or synthetic."""
+    from scipy.ndimage import sobel
+    px_size_x = abs(transform.a)
+    px_size_y = abs(transform.e)
+    dz_dx = sobel(elevation, axis=1) / (8 * px_size_x)
+    dz_dy = sobel(elevation, axis=0) / (8 * px_size_y)
+    slope_deg = np.degrees(np.arctan(np.sqrt(dz_dx ** 2 + dz_dy ** 2)))
+
+    # Degrees-per-pixel -> rough meters-per-pixel at this latitude, for the
+    # flow-accumulation / TWI formulas (approximate, fine for synthetic data).
+    px_size_m = px_size_x * 111_000
+
+    flow_accum = compute_flow_accumulation(elevation)
+    twi = compute_twi(elevation, slope_deg, flow_accum, pixel_size_m=px_size_m)
+    drainage_km = compute_drainage_distance_km(flow_accum, pixel_size_m=px_size_m)
+
+    _write_raster(os.path.join(terrain_dir, "sikkim_twi.tif"), twi, transform, "float32")
+    _write_raster(os.path.join(terrain_dir, "sikkim_drainage_distance.tif"), drainage_km,
+                   transform, "float32")
+    print(f"Synthetic TWI + drainage-distance rasters saved -> {terrain_dir}/ "
+          f"(from D8 flow accumulation on the DEM)")
+
+
+def make_insar_and_satellite_moisture(elevation: np.ndarray, geology: np.ndarray,
+                                       slope_deg: np.ndarray, seed: int = 40):
+    """Ground-deformation (InSAR-style) proxy and a *separate* satellite
+    soil-moisture layer distinct from the ground-based baseline — coarser
+    and noisier, the way a real remote-sensing product would be. Returns
+    the two arrays; the caller writes them as rasters."""
+    rng = np.random.default_rng(seed)
+    size = elevation.shape[0]
+
+    # Weaker/younger lithology (higher geology code, by our synthetic
+    # convention) + steeper slope -> more creep/deformation.
+    geology_factor = (geology.astype(float) - 1) / 4.0  # 0..1
+    slope_factor = np.clip(slope_deg / 45.0, 0, 1)
+    deformation = 2.0 + 10.0 * (0.5 * geology_factor + 0.5 * slope_factor)
+    deformation += rng.normal(0, 1.0, size=(size, size))
+    deformation = deformation.clip(0, None)
+
+    # Satellite soil moisture: same rough spatial pattern as ground wetness
+    # would have, but resampled coarser (blurred more) and with its own
+    # sensor noise, distinct from the ground-station-style baseline.
+    raw = rng.normal(size=(size, size))
+    coarse = gaussian_filter(raw, sigma=size / 8)
+    sat_moisture = (coarse - coarse.min()) / (coarse.max() - coarse.min())
+    sat_moisture = (0.7 * sat_moisture + 0.3 * rng.uniform(0, 1, size=(size, size))).clip(0, 1)
+
+    return deformation, sat_moisture
+
+
+def make_glacial_lakes(out_path: str, elevation: np.ndarray, transform, seed: int = 50, n_lakes: int = 4):
+    """A handful of high-elevation glacial lake points (>4200m), the way
+    South Lhonak actually sits — for a GLOF (glacial lake outburst flood)
+    proximity feature, a distinct hazard mechanism from rainfall-triggered
+    slope failure."""
+    rng = np.random.default_rng(seed)
+    size = elevation.shape[0]
+    high_rows, high_cols = np.where(elevation > 4200)
+    if len(high_rows) == 0:
+        high_rows, high_cols = np.where(elevation > np.percentile(elevation, 95))
+
+    idx = rng.choice(len(high_rows), size=min(n_lakes, len(high_rows)), replace=False)
+    features = []
+    for i in idx:
+        lon, lat = rasterio.transform.xy(transform, int(high_rows[i]), int(high_cols[i]))
+        features.append({
+            "type": "Feature",
+            "properties": {"name": f"synthetic_glacial_lake_{i}"},
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+        })
+    geojson = {"type": "FeatureCollection", "features": features}
+    with open(out_path, "w") as f:
+        json.dump(geojson, f)
+    print(f"Synthetic glacial lake points saved -> {out_path} ({len(features)} lakes)")
+
+
+def make_population_density(out_path: str, land_use: np.ndarray, transform, seed: int = 60):
+    """Population density proxy, tied to land use (urban patches dense,
+    agriculture moderate, forest/barren sparse) — the "exposure" half of
+    Risk = Hazard x Exposure, not just where the ground is unstable but
+    where that matters for people."""
+    rng = np.random.default_rng(seed)
+    base = {1: 5, 2: 60, 3: 800, 4: 1}  # people per sq km, by land_use code
+    density = np.vectorize(base.get)(land_use).astype(float)
+    density *= rng.uniform(0.7, 1.3, size=land_use.shape)
+    _write_raster(out_path, density, transform, "float32")
+    print(f"Synthetic population-density raster saved -> {out_path}")
+
 
 def main(args):
     terrain_dir = os.path.join(args.out_dir, "terrain")
@@ -323,8 +472,12 @@ def main(args):
     make_rainfall(rainfall_dir)
     make_roads(os.path.join(infra_dir, "sikkim_osm.geojson"))
     make_positives(os.path.join(hist_dir, "coolr_ner_labeled.csv"), elevation, transform)
-    make_soil_geology(soil_geo_dir, elevation, transform)
-    make_satellite(satellite_dir, elevation, transform)
+    geology = make_soil_geology(soil_geo_dir, elevation, transform)
+    make_hydrology(terrain_dir, dem_path, elevation, transform)
+    land_use = make_satellite(satellite_dir, elevation, transform, geology)
+    make_glacial_lakes(os.path.join(hist_dir, "sikkim_glacial_lakes.geojson"), elevation, transform)
+    make_population_density(os.path.join(infra_dir, "sikkim_population_density.tif"),
+                             land_use, transform)
 
 
 if __name__ == "__main__":

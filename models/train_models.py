@@ -29,6 +29,7 @@ from spatial_cv import spatial_kfold_indices
 
 FEATURE_COLS = [
     "elevation", "slope", "aspect", "curvature", "ruggedness_tri",
+    "twi", "drainage_distance_km",
     "rainfall_1d", "rainfall_3d", "rainfall_7d", "rainfall_15d", "rainfall_30d",
     "road_distance", "historical_landslide_density", "distance_to_nearest_landslide_m",
     # Literature-standard factors added on top of the original terrain/rainfall set —
@@ -36,8 +37,10 @@ FEATURE_COLS = [
     # rasters, so tree models can split on them directly with no extra encoding.
     "soil", "geology", "NDVI", "land_use",
     "seismic_pga", "fault_distance_km",
-    "soil_moisture_baseline", "soil_moisture_index",
-    "insolation_proxy", "freeze_thaw_index",
+    "soil_moisture_baseline", "soil_moisture_index", "soil_moisture_satellite",
+    "insar_deformation_mm_yr",
+    "insolation_proxy", "freeze_thaw_index", "root_cohesion_proxy",
+    "glacial_lake_distance_km", "population_density", "exposure_index",
 ]
 
 

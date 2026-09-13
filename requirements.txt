@@ -19,3 +19,4 @@ streamlit
 folium
 streamlit-js-eval
 plotly
+requests
