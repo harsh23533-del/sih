@@ -199,6 +199,26 @@ def make_positives(out_path: str, elevation: np.ndarray, transform, seed: int = 
     print(f"Synthetic positive landslide events saved -> {out_path} ({len(records)} events)")
 
 
+def _pixel_size_m(elevation: np.ndarray, transform):
+    """Converts the DEM's degree-based pixel size to meters using its
+    center latitude — same fix as TerrainExtractor in terrain_features.py."""
+    px_size_x_deg = abs(transform.a)
+    px_size_y_deg = abs(transform.e)
+    height, width = elevation.shape
+    center_lat = rasterio.transform.xy(transform, height // 2, width // 2)[1]
+    meters_per_deg_lat = 111_320.0
+    meters_per_deg_lon = 111_320.0 * np.cos(np.radians(center_lat))
+    return px_size_x_deg * meters_per_deg_lon, px_size_y_deg * meters_per_deg_lat
+
+
+def _slope_deg_from_elevation(elevation: np.ndarray, transform):
+    from scipy.ndimage import sobel
+    px_size_x, px_size_y = _pixel_size_m(elevation, transform)
+    dz_dx = sobel(elevation, axis=1) / (8 * px_size_x)
+    dz_dy = sobel(elevation, axis=0) / (8 * px_size_y)
+    return np.degrees(np.arctan(np.sqrt(dz_dx ** 2 + dz_dy ** 2))), px_size_x, px_size_y
+
+
 def _write_raster(out_path: str, array: np.ndarray, transform, dtype):
     with rasterio.open(
         out_path, "w", driver="GTiff", height=array.shape[0], width=array.shape[1],
@@ -348,12 +368,7 @@ def make_satellite(out_dir: str, elevation: np.ndarray, transform, geology: np.n
     print(f"Synthetic NDVI + land-use rasters saved -> {out_dir}/ "
           f"(land use codes: 1=Forest 2=Agriculture 3=Urban 4=Barren/Snow)")
 
-    from scipy.ndimage import sobel
-    px_size_x = abs(transform.a)
-    px_size_y = abs(transform.e)
-    dz_dx = sobel(elevation, axis=1) / (8 * px_size_x)
-    dz_dy = sobel(elevation, axis=0) / (8 * px_size_y)
-    slope_deg = np.degrees(np.arctan(np.sqrt(dz_dx ** 2 + dz_dy ** 2)))
+    slope_deg, _, _ = _slope_deg_from_elevation(elevation, transform)
 
     deformation, sat_moisture = make_insar_and_satellite_moisture(elevation, geology, slope_deg)
     _write_raster(os.path.join(out_dir, "sikkim_insar_deformation.tif"), deformation,
@@ -368,16 +383,8 @@ def make_satellite(out_dir: str, elevation: np.ndarray, transform, geology: np.n
 def make_hydrology(terrain_dir: str, dem_path: str, elevation: np.ndarray, transform):
     """TWI + drainage distance, purely derived from the DEM already
     generated — no extra external data source needed, real or synthetic."""
-    from scipy.ndimage import sobel
-    px_size_x = abs(transform.a)
-    px_size_y = abs(transform.e)
-    dz_dx = sobel(elevation, axis=1) / (8 * px_size_x)
-    dz_dy = sobel(elevation, axis=0) / (8 * px_size_y)
-    slope_deg = np.degrees(np.arctan(np.sqrt(dz_dx ** 2 + dz_dy ** 2)))
-
-    # Degrees-per-pixel -> rough meters-per-pixel at this latitude, for the
-    # flow-accumulation / TWI formulas (approximate, fine for synthetic data).
-    px_size_m = px_size_x * 111_000
+    slope_deg, px_size_x, px_size_y = _slope_deg_from_elevation(elevation, transform)
+    px_size_m = (px_size_x + px_size_y) / 2.0
 
     flow_accum = compute_flow_accumulation(elevation)
     twi = compute_twi(elevation, slope_deg, flow_accum, pixel_size_m=px_size_m)

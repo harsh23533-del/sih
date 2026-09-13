@@ -382,7 +382,7 @@ def main():
             st.info("No clear standout factor for this location.")
 
         st.markdown("**Terrain & environment at this location**")
-        env_cols = [c for c in ["elevation", "slope", "aspect", "road_distance",
+        env_cols = [c for c in ["elevation", "slope", "aspect", "curvature", "road_distance",
                                  "historical_landslide_density", "soil", "geology", "NDVI",
                                  "land_use", "seismic_pga", "fault_distance_km",
                                  "soil_moisture_index", "insolation_proxy", "freeze_thaw_index",

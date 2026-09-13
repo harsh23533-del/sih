@@ -117,11 +117,13 @@ gaps from a standard landslide-susceptibility factor checklist:
 The DEM resolution was also bumped from a 300x300 to a 400x400 synthetic grid
 (finer effective resolution) per the same review.
 
-**Known pre-existing scale issue (not introduced by this round):** `terrain_features.py`
-computes slope/curvature assuming the DEM's pixel size is in meters, but the
-synthetic DEM's GeoTIFF transform is in degrees (geographic CRS) — so slope
-saturates near 90 deg and curvature shows an inflated raw magnitude. This doesn't
-break the pipeline (tree models still split on the (mis-scaled but still
-monotonic) signal), but should be fixed by reprojecting the DEM to a metric CRS
-(e.g. UTM 45N for Sikkim) before computing derivatives, ideally alongside the
-real-DEM swap-in.
+**Fixed:** `terrain_features.py` previously computed slope/curvature assuming the
+DEM's pixel size was in meters, but the synthetic DEM's GeoTIFF transform is in
+degrees (geographic CRS) — this saturated slope near 90 deg for almost every point
+and made curvature's raw magnitude meaningless. Fixed by converting degrees-per-pixel
+to meters-per-pixel using the DEM's center latitude (see `_pixel_size_m()` /
+`TerrainExtractor.__init__`) rather than a full CRS reprojection — sufficient
+accuracy for a single small-area synthetic DEM. Slope now ranges ~1-45 deg
+(mean ~17-18 deg) as expected for real mountainous terrain, and curvature is a
+small signed value instead of order-10^7. All rasters and models were regenerated
+after this fix.

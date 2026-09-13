@@ -22,10 +22,20 @@ class TerrainExtractor:
         self.elevation = self.src.read(1).astype(float)
         self.elevation[self.elevation < -1000] = np.nan  # mask nodata/voids
 
-        # pixel size in meters (approx, assumes DEM is in a projected-like small area;
-        # for large-area DEMs in geographic CRS, reproject to a metric CRS first)
-        self.px_size_x = abs(self.src.transform.a)
-        self.px_size_y = abs(self.src.transform.e)
+        # The DEM's transform is in degrees (geographic CRS), but slope/
+        # curvature need real ground distance — convert degrees-per-pixel
+        # to meters-per-pixel using the DEM's center latitude. This was
+        # previously used directly as if it were already in meters, which
+        # made pixel size ~1000x too small and saturated slope near 90 deg
+        # (see docs/Limitations_and_Assumptions.md).
+        px_size_x_deg = abs(self.src.transform.a)
+        px_size_y_deg = abs(self.src.transform.e)
+        height, width = self.elevation.shape
+        center_lat = self.src.xy(height // 2, width // 2)[1]
+        meters_per_deg_lat = 111_320.0
+        meters_per_deg_lon = 111_320.0 * np.cos(np.radians(center_lat))
+        self.px_size_x = px_size_x_deg * meters_per_deg_lon
+        self.px_size_y = px_size_y_deg * meters_per_deg_lat
 
         self._compute_derivatives()
 
