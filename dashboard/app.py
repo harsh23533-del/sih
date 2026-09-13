@@ -27,6 +27,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_js_eval import get_geolocation
 from streamlit_folium import st_folium
 
@@ -567,10 +568,30 @@ def rainfall_chart(row: dict) -> go.Figure:
     return fig
 
 
+_HERO_HTML_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "frontend", "landslide-3d-hero.html"
+)
+
+
+def render_hero_banner():
+    """Best-effort: renders the standalone 3D hero (Three.js) at the top
+    of the page inside an iframe. If the file's missing or unreadable for
+    any reason, skip it silently rather than breaking the whole app --
+    same fallback contract as the live_* data modules."""
+    try:
+        with open(_HERO_HTML_PATH, encoding="utf-8") as f:
+            hero_html = f.read()
+    except OSError:
+        return
+    components.html(hero_html, height=420, scrolling=False)
+
+
 def main():
     args = parse_cli_args()
     st.set_page_config(page_title="Landslide Early Warning", layout="centered",
                         page_icon="⛰️")
+
+    render_hero_banner()
 
     st.markdown(
         "<h2 style='margin-bottom:0;'>⛰️ Landslide Early Warning</h2>"
