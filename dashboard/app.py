@@ -328,7 +328,7 @@ def render_hero_terrain_3d(height_px: int = 300):
     Python-side computation); a stylized low-poly ridge, not a real DEM."""
     st.html(
         f"""
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r160/three.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
         <div id="terrain3d-container" style="width:100%; height:{height_px}px; margin:-8px 0 4px 0;"></div>
         <script>
         (function() {{
