@@ -376,7 +376,6 @@ def render_hero_terrain_3d(location_name: str, distance_to_landslide_km, height_
           </div>
           <div id="hero3d-container" style="position:absolute; inset:0;"></div>
         </div>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
         <script>
         (function() {{
           var wrap = document.getElementById('hero3d-container').parentElement;
@@ -386,6 +385,16 @@ def render_hero_terrain_3d(location_name: str, distance_to_landslide_km, height_
           distEl.textContent = {dist_js};
           var w = wrap.clientWidth, h = {height_px};
 
+          // st.html() injects this whole block at once -- a plain
+          // <script src="..."> tag here does NOT block the parser the
+          // way it would in normal page HTML, so the code right after it
+          // can start running before THREE has actually loaded and
+          // crash. Loading the CDN script ourselves and only running the
+          // scene setup inside its onload callback guarantees THREE
+          // exists first. Guarding on window.THREE also means a second
+          // render of this widget (e.g. Streamlit re-running the script)
+          // won't re-fetch/re-insert the CDN tag every time.
+          function startScene() {{
           var scene = new THREE.Scene();
           scene.fog = new THREE.FogExp2(0x0a1420, 0.055);
           var camera = new THREE.PerspectiveCamera(42, w / h, 0.1, 100);
@@ -462,6 +471,22 @@ def render_hero_terrain_3d(location_name: str, distance_to_landslide_km, height_
             requestAnimationFrame(tick);
           }}
           requestAnimationFrame(tick);
+          }}
+
+          if (window.THREE) {{
+            startScene();
+          }} else {{
+            var existing = document.getElementById('three-js-cdn-script');
+            if (existing) {{
+              existing.addEventListener('load', startScene);
+            }} else {{
+              var s = document.createElement('script');
+              s.id = 'three-js-cdn-script';
+              s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+              s.onload = startScene;
+              document.head.appendChild(s);
+            }}
+          }}
         }})();
         </script>
         """,
