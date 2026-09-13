@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>NER Landslide Watch</title>
+<style>
+  @font-face { font-family: 'system-serif'; src: local('Iowan Old Style'), local('Palatino Linotype'), local('Georgia'); }
+
+  :root{
+    --sky-top:#0A0F1C;
+    --sky-mid:#141B2E;
+    --dawn:#C97B3D;
+    --dawn-bright:#F2A65A;
+    --ink:#EDE7DD;
+    --ink-dim:#9BA3B4;
+    --safe:#5FD9C7;
+    --hazard:#E2734B;
+    --line:rgba(237,231,221,0.18);
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+
+  html,body{
+    width:100%; height:100%; overflow:hidden;
+    background: radial-gradient(120% 90% at 50% 100%, var(--dawn) 0%, var(--sky-mid) 42%, var(--sky-top) 78%);
+    font-family: ui-serif, 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+    color: var(--ink);
+  }
+
+  #scene{ position:fixed; inset:0; }
+  #scene canvas{ display:block; width:100%; height:100%; }
+
+  .overlay{ position:fixed; inset:0; pointer-events:none; }
+
+  .wordmark{
+    position:absolute; top:28px; left:32px;
+    display:flex; align-items:center; gap:10px;
+    font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+    font-size:11px; letter-spacing:0.04em; color: var(--ink-dim);
+  }
+  .wordmark .dot{
+    width:7px; height:7px; border-radius:50%;
+    background: var(--safe);
+    box-shadow: 0 0 8px 2px var(--safe);
+    animation: blink 2.4s ease-in-out infinite;
+  }
+  @keyframes blink{ 0%,100%{ opacity:1; } 50%{ opacity:0.35; } }
+
+  .headline{
+    position:absolute; left:32px; bottom:34px; max-width:420px;
+  }
+  .headline h1{
+    font-size: clamp(26px, 3.4vw, 38px);
+    font-weight: 500;
+    line-height:1.15;
+    letter-spacing: -0.01em;
+  }
+  .headline p{
+    margin-top:10px;
+    font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+    font-size:12px; color: var(--ink-dim); line-height:1.6;
+    max-width: 340px;
+  }
+
+  .pill{
+    position:absolute; pointer-events:none;
+    padding:9px 14px; border-radius:999px;
+    background: rgba(10,15,28,0.55);
+    backdrop-filter: blur(6px);
+    border:1px solid var(--pc, var(--safe));
+    font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+    font-size:12.5px; white-space:nowrap;
+    transform: translate(-50%,-100%);
+    transition: left 0.06s linear, top 0.06s linear;
+  }
+  .pill b{ font-weight:600; color:var(--pc, var(--safe)); }
+  .pill.wrap{ white-space:normal; width:198px; line-height:1.4; }
+
+  .pill-line{
+    position:absolute; pointer-events:none;
+    width:1px; background: var(--line);
+    transform-origin: top;
+  }
+
+  .chevron{
+    position:absolute; left:50%; bottom:22px; transform:translateX(-50%);
+    width:22px; height:22px;
+    animation: bob 2.2s ease-in-out infinite;
+    opacity:0.65;
+  }
+  @keyframes bob{ 0%,100%{ transform:translate(-50%,0); } 50%{ transform:translate(-50%,7px); } }
+
+  .footline{
+    position:absolute; right:32px; bottom:34px; text-align:right;
+    font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+    font-size:11px; color: var(--ink-dim); line-height:1.7;
+  }
+  .footline span{ color: var(--ink); }
+</style>
+</head>
+<body>
+
+<div id="scene"></div>
+
+<div class="overlay">
+  <div class="wordmark"><span class="dot"></span>NER landslide watch — live tracking</div>
+
+  <div class="headline">
+    <h1>Every ridge in this range is being watched.</h1>
+    <p>Terrain, rainfall, and fault data are checked against your location continuously — this is a live distance to the nearest tracked slide, not a snapshot.</p>
+  </div>
+
+  <div class="footline">lat 26.2649°N, lon 82.0721°E<br/><span>Sultanpur, Uttar Pradesh</span></div>
+
+  <svg class="chevron" viewBox="0 0 24 24" fill="none"><path d="M4 9l8 8 8-8" stroke="#EDE7DD" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+
+  <div id="pillUser" class="pill" style="--pc:var(--safe)"><b>Sultanpur</b> — your live location</div>
+  <div id="pillHazard" class="pill wrap" style="--pc:var(--hazard)"><b>Nearest tracked slide</b> · Balia Nala, Nainital · <span id="distVal">—</span> km away</div>
+  <div id="lineUser" class="pill-line"></div>
+  <div id="lineHazard" class="pill-line"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+
+// ---------- live distance (haversine, computed, not hardcoded) ----------
+function haversine(lat1,lon1,lat2,lon2){
+  const R=6371, toRad=d=>d*Math.PI/180;
+  const dphi=toRad(lat2-lat1), dlmb=toRad(lon2-lon1);
+  const a=Math.sin(dphi/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dlmb/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+const dist = Math.round(haversine(26.2649,82.0721, 29.3919,79.4542));
+document.getElementById('distVal').textContent = dist;
+
+// ---------- three.js scene ----------
+const mount = document.getElementById('scene');
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x141b2e, 0.028);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth/innerHeight, 0.1, 200);
+let camAngle = -0.55;
+const camRadius = 22, camHeight = 6.2, camTarget = new THREE.Vector3(0, 3.2, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+mount.appendChild(renderer.domElement);
+
+// lights: warm dawn key light + cool ambient fill
+const dawnLight = new THREE.DirectionalLight(0xF2A65A, 1.35);
+dawnLight.position.set(-14, 8, 6);
+scene.add(dawnLight);
+scene.add(new THREE.AmbientLight(0x33415c, 0.9));
+const hazardLight = new THREE.PointLight(0xE2734B, 3.2, 14);
+scene.add(hazardLight);
+
+// ---------- procedural terrain: single ridge, noise-jagged ----------
+function valueNoise2D(seed){
+  const grid = {};
+  function rand(ix,iz){
+    const k = ix+','+iz;
+    if(grid[k]===undefined){
+      const s = Math.sin(ix*127.1+iz*311.7+seed)*43758.5453;
+      grid[k] = s - Math.floor(s);
+    }
+    return grid[k];
+  }
+  return function(x,z){
+    const ix=Math.floor(x), iz=Math.floor(z);
+    const fx=x-ix, fz=z-iz;
+    const sx=fx*fx*(3-2*fx), sz=fz*fz*(3-2*fz);
+    const a=rand(ix,iz), b=rand(ix+1,iz), c=rand(ix,iz+1), d=rand(ix+1,iz+1);
+    return a+(b-a)*sx + (c-a)*sz*(1-sx) + (d-b)*sz*sx;
+  };
+}
+const n1 = valueNoise2D(11), n2 = valueNoise2D(53), n3 = valueNoise2D(97);
+function fractalNoise(x,z){
+  return n1(x*0.18,z*0.18)*0.55 + n2(x*0.42,z*0.42)*0.28 + n3(x*1.1,z*1.1)*0.17;
+}
+
+const SIZE=54, SEG=140;
+const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
+geo.rotateX(-Math.PI/2);
+
+const ridgeCenter = new THREE.Vector2(-2, -2);
+const peakHeight = 9.2;
+const colors = [];
+const col = new THREE.Color();
+const pos = geo.attributes.position;
+
+for(let i=0;i<pos.count;i++){
+  const x = pos.getX(i), z = pos.getZ(i);
+  const d = Math.hypot(x-ridgeCenter.x, z-ridgeCenter.y);
+  const ridge = Math.exp(-(d*d)/58);           // one prominent conical peak
+  const jag = fractalNoise(x,z) - 0.5;
+  const h = ridge*peakHeight + jag*ridge*3.4 + Math.max(0, jag)*0.35;
+  pos.setY(i, h);
+
+  const t = Math.min(1, h/peakHeight);
+  if(t>0.82) col.setHex(0xDCE3EA);        // snow cap
+  else if(t>0.5) col.setHex(0x6B5B4D);    // rock
+  else if(t>0.18) col.setHex(0x3E5C46);   // forested slope
+  else col.setHex(0x425466);              // misty plain
+  colors.push(col.r, col.g, col.b);
+}
+geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+geo.computeVertexNormals();
+
+const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.92, metalness:0.02, flatShading:true });
+const terrain = new THREE.Mesh(geo, mat);
+scene.add(terrain);
+
+function terrainHeightAt(x,z){
+  const d = Math.hypot(x-ridgeCenter.x, z-ridgeCenter.y);
+  const ridge = Math.exp(-(d*d)/58);
+  const jag = fractalNoise(x,z)-0.5;
+  return ridge*peakHeight + jag*ridge*3.4 + Math.max(0,jag)*0.35;
+}
+
+// hazard marker: pulsing ring + glow at the peak
+const peakPos = new THREE.Vector3(ridgeCenter.x, terrainHeightAt(ridgeCenter.x, ridgeCenter.y)+0.15, ridgeCenter.y);
+hazardLight.position.copy(peakPos).add(new THREE.Vector3(0,1,0));
+
+const ringGeo = new THREE.RingGeometry(0.55, 0.68, 48);
+const ringMat = new THREE.MeshBasicMaterial({ color:0xE2734B, side:THREE.DoubleSide, transparent:true, opacity:0.9 });
+const ring = new THREE.Mesh(ringGeo, ringMat);
+ring.rotation.x = -Math.PI/2;
+ring.position.copy(peakPos).add(new THREE.Vector3(0,0.05,0));
+scene.add(ring);
+
+const dotGeo = new THREE.SphereGeometry(0.14, 16, 16);
+const dotMat = new THREE.MeshBasicMaterial({ color:0xE2734B });
+const dot = new THREE.Mesh(dotGeo, dotMat);
+dot.position.copy(peakPos);
+scene.add(dot);
+
+// user marker: floats in open air over the plain (Sultanpur has no mountain)
+const userPos = new THREE.Vector3(9.5, 3.6, -6.2);
+const userDotGeo = new THREE.SphereGeometry(0.12, 16, 16);
+const userDotMat = new THREE.MeshBasicMaterial({ color:0x5FD9C7 });
+const userDot = new THREE.Mesh(userDotGeo, userDotMat);
+userDot.position.copy(userPos);
+scene.add(userDot);
+
+// thin ambient mist particles near the base
+const mistGeo = new THREE.BufferGeometry();
+const mistCount = 140, mistPos = [];
+for(let i=0;i<mistCount;i++){
+  mistPos.push((Math.random()-0.5)*SIZE, Math.random()*1.6, (Math.random()-0.5)*SIZE);
+}
+mistGeo.setAttribute('position', new THREE.Float32BufferAttribute(mistPos,3));
+const mistMat = new THREE.PointsMaterial({ color:0x9BA3B4, size:0.55, transparent:true, opacity:0.22, sizeAttenuation:true });
+scene.add(new THREE.Points(mistGeo, mistMat));
+
+// ---------- screen-space projection for the HTML pills ----------
+const pillUser = document.getElementById('pillUser');
+const pillHazard = document.getElementById('pillHazard');
+const lineUser = document.getElementById('lineUser');
+const lineHazard = document.getElementById('lineHazard');
+
+function project(v3, elAnchorBottom){
+  const v = v3.clone().project(camera);
+  const x = (v.x*0.5+0.5)*innerWidth;
+  const y = (1-(v.y*0.5+0.5))*innerHeight;
+  return {x,y, visible: v.z<1};
+}
+
+function placePill(el, lineEl, worldPos, pillAboveOffset){
+  const p = project(worldPos);
+  if(!p.visible){ el.style.opacity=0; lineEl.style.opacity=0; return; }
+  el.style.opacity=1; lineEl.style.opacity=1;
+  const pillY = p.y - pillAboveOffset;
+  el.style.left = p.x+'px';
+  el.style.top = pillY+'px';
+  lineEl.style.left = p.x+'px';
+  lineEl.style.top = pillY+'px';
+  lineEl.style.height = Math.max(0, p.y-pillY)+'px';
+}
+
+let t0 = performance.now();
+function animate(now){
+  const t = (now-t0)/1000;
+  requestAnimationFrame(animate);
+
+  camAngle += 0.0022;
+  camera.position.set(
+    Math.sin(camAngle)*camRadius,
+    camHeight + Math.sin(t*0.15)*0.4,
+    Math.cos(camAngle)*camRadius
+  );
+  camera.lookAt(camTarget);
+
+  const pulse = 1 + Math.sin(t*2.1)*0.18;
+  ring.scale.set(pulse,pulse,pulse);
+  ringMat.opacity = 0.55 + Math.sin(t*2.1)*0.3;
+
+  const bob = Math.sin(t*1.3)*0.12;
+  userDot.position.y = userPos.y + bob;
+
+  placePill(pillUser, lineUser, userDot.position, 26);
+  placePill(pillHazard, lineHazard, dot.position, 26);
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(animate);
+
+window.addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+})();
+</script>
+</body>
+</html>
