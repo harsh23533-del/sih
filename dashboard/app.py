@@ -11,7 +11,7 @@ shows the same colors for everyone else on the map.
 
 Requirements:
     pip install streamlit pandas numpy plotly shap folium xgboost
-                scikit-learn streamlit-js-eval
+                scikit-learn streamlit-js-eval streamlit-folium
 
 Usage:
     streamlit run app.py -- --features ../data/processed/final_feature_table.csv \\
@@ -27,6 +27,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from streamlit_js_eval import get_geolocation
+from streamlit_folium import st_folium
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "models"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "explainability"))
@@ -292,6 +293,9 @@ def main():
     model_a, model_b = get_models(args.model_a, args.model_b)
     df = get_features(args.features)
 
+    if "clicked_latlon" not in st.session_state:
+        st.session_state.clicked_latlon = None
+
     # --- Auto-detect the visitor's location, no typing required ------------
     loc = get_geolocation()
 
@@ -304,7 +308,14 @@ def main():
 
         st.header("📍 Set a location")
         st.caption("Didn't get a location prompt, or want to check somewhere else? "
-                   "Set it manually below.")
+                   "Set it manually below, or tap anywhere on the map itself.")
+        if st.session_state.clicked_latlon:
+            lat_c, lon_c = st.session_state.clicked_latlon
+            st.info(f"📌 Showing the point you tapped on the map "
+                    f"({lat_c:.4f}, {lon_c:.4f}).")
+            if st.button("Clear map pin"):
+                st.session_state.clicked_latlon = None
+                st.rerun()
         manual = st.checkbox("Enter a location manually")
         manual_mode = None
         place_query = None
@@ -332,7 +343,19 @@ def main():
     user_latlon = None
     distance_note = ""
 
-    if manual_mode == "Type a place name" and place_query:
+    if st.session_state.clicked_latlon:
+        # Highest priority: the visitor just tapped an exact spot on the
+        # map to ask "what about here?" — that beats any earlier manual
+        # entry or auto-detected browser location.
+        lat, lon = st.session_state.clicked_latlon
+        user_latlon = (lat, lon)
+        nearest, dist_km = nearest_row(df, lat, lon)
+        base_row = nearest.to_dict()
+        distance_note = (
+            f"Showing risk for the exact point you tapped on the map "
+            f"(closest monitored point is {dist_km:.1f} km away)."
+        )
+    elif manual_mode == "Type a place name" and place_query:
         found = geocode_place_name(place_query)
         if found:
             lat, lon, matched_name = found
@@ -407,7 +430,9 @@ def main():
         st.markdown(f"📣 *{alert.message}*")
 
     st.markdown("#### 🗺️ Your area on the map")
-    st.caption("Green = safe, yellow = stay alert, orange = warning, red = leave the area.")
+    st.caption("Green = safe, yellow = stay alert, orange = warning, red = leave the area. "
+               "The blue crosshair pin is your exact point — tap anywhere else on the map "
+               "to check the risk there instead.")
     sample_size = min(len(df), 150)
     map_df = df.sample(sample_size, random_state=42) if len(df) > sample_size else df.copy()
     scored_sample = pd.DataFrame([
@@ -416,7 +441,14 @@ def main():
     ])
     fmap = build_friendly_map(scored_sample, user_location=user_latlon, user_risk_level=level,
                                user_location_name=location_name)
-    st.html(f'<div style="height:420px;">{fmap._repr_html_()}</div>', unsafe_allow_javascript=True)
+    map_state = st_folium(fmap, height=420, width=None, returned_objects=["last_clicked"],
+                           key="risk_map")
+    clicked = map_state.get("last_clicked") if map_state else None
+    if clicked:
+        new_latlon = (clicked["lat"], clicked["lng"])
+        if new_latlon != st.session_state.clicked_latlon:
+            st.session_state.clicked_latlon = new_latlon
+            st.rerun()
 
     # --- Everything technical is shown directly — nothing hidden -----------
     st.markdown("---")
