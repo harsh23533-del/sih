@@ -15,10 +15,13 @@ road_distance and drainage_distance_km come from OpenStreetMap's Overpass
 API: straight-line distance to the nearest mapped road / waterway, widening
 the search radius if nothing is found nearby.
 
+historical_landslide_density and distance_to_nearest_landslide_m are live
+too, but computed locally against this repo's own catalog rather than
+fetched from the network -- see live_landslide_history.py.
+
 Left as synthetic (no simple free live source exists): geology, soil type,
-land_use, NDVI, seismic_pga, fault_distance_km, historical_landslide_density,
-distance_to_nearest_landslide_m, insar_deformation_mm_yr, twi,
-insolation_proxy, freeze_thaw_index, root_cohesion_proxy,
+land_use, NDVI, seismic_pga, fault_distance_km, insar_deformation_mm_yr,
+twi, insolation_proxy, freeze_thaw_index, root_cohesion_proxy,
 glacial_lake_distance_km, population_density, exposure_index.
 """
 import math

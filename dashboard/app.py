@@ -40,6 +40,7 @@ from gis_map import build_friendly_map  # noqa: E402
 from live_weather import fetch_live_rainfall  # noqa: E402
 from live_soil import fetch_live_soil_moisture  # noqa: E402
 from live_terrain import fetch_live_terrain  # noqa: E402
+from live_landslide_history import fetch_live_landslide_history  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +211,13 @@ def get_live_terrain(lat: float, lon: float):
 
 
 @st.cache_data(show_spinner=False)
+def get_live_landslide_history(lat: float, lon: float):
+    """No network call (catalog is local), so no ttl needed -- it can only
+    change if the repo's catalog files themselves change."""
+    return fetch_live_landslide_history(lat, lon)
+
+
+@st.cache_data(show_spinner=False)
 def score_sample_points(map_df: pd.DataFrame, _model_a, _model_b) -> pd.DataFrame:
     """Batch-scores the map's sample points once and caches the result, so
     dragging the rain slider, ticking a checkbox, or tapping the map doesn't
@@ -349,11 +357,13 @@ def main():
         use_live_rain = st.checkbox(
             "Use live data (weather, soil moisture, terrain — not the synthetic dataset)",
             value=True,
-            help="Fetches real rainfall/soil-moisture (Open-Meteo) and real "
+            help="Fetches real rainfall/soil-moisture (Open-Meteo), real "
                  "elevation/slope/aspect/road & river distance (Open-Meteo Elevation "
-                 "+ OpenStreetMap) for the exact point you're checking. Whatever a "
-                 "source can't provide (geology, land use, seismic hazard, InSAR, "
-                 "etc.) still comes from the nearest synthetic sample point."
+                 "+ OpenStreetMap), and real past-landslide density/distance (this "
+                 "project's own historical catalog) for the exact point you're "
+                 "checking. Whatever a source can't provide (geology, land use, "
+                 "seismic hazard, InSAR, etc.) still comes from the nearest "
+                 "synthetic sample point."
         )
         st.divider()
 
@@ -454,7 +464,8 @@ def main():
     # --- Swap in live data for this exact point, if enabled ----------------
     # Whatever a live source can't provide (geology, land use, seismic
     # hazard, InSAR, etc.) still comes from the nearest synthetic sample
-    # point (base_row) -- only the pieces we have a real source for get
+    # point (base_row) -- only the pieces we have a real source for
+    # (rainfall, soil moisture, terrain, past-landslide history) get
     # overwritten.
     if use_live_rain and user_latlon:
         live_notes = []
@@ -470,6 +481,12 @@ def main():
         if live_terrain:
             base_row.update(live_terrain)
             live_notes.append("terrain")
+        live_landslide_history = get_live_landslide_history(
+            round(user_latlon[0], 4), round(user_latlon[1], 4)
+        )
+        if live_landslide_history:
+            base_row.update(live_landslide_history)
+            live_notes.append("past-landslide history")
         if live_notes:
             distance_note = (distance_note + " " if distance_note else "") + \
                 f"🌍 Using live {', '.join(live_notes)} for this exact point."
