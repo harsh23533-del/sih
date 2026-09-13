@@ -321,98 +321,6 @@ def speak_text(text: str, dedupe_key: str):
     )
 
 
-def render_hero_terrain_3d(height_px: int = 300):
-    """A slowly auto-rotating 3D low-poly mountain, purely decorative —
-    makes the header feel less like a plain form and more like an actual
-    terrain/hazard tool. Pure client-side Three.js (CDN, no API key, no
-    Python-side computation); a stylized low-poly ridge, not a real DEM."""
-    st.html(
-        f"""
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-        <div id="terrain3d-container" style="width:100%; height:{height_px}px; margin:-8px 0 4px 0;"></div>
-        <script>
-        (function() {{
-            const container = document.getElementById('terrain3d-container');
-            const height = {height_px};
-            function getWidth() {{ return container.clientWidth || 700; }}
-
-            const scene = new THREE.Scene();
-            const camera = new THREE.PerspectiveCamera(42, getWidth() / height, 0.1, 1000);
-            camera.position.set(0, 4.6, 8.5);
-            camera.lookAt(0, 0.3, 0);
-
-            const renderer = new THREE.WebGLRenderer({{ antialias: true, alpha: true }});
-            renderer.setSize(getWidth(), height);
-            renderer.setClearColor(0x000000, 0);
-            container.appendChild(renderer.domElement);
-
-            scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
-            dirLight.position.set(6, 10, 6);
-            scene.add(dirLight);
-            const fillLight = new THREE.DirectionalLight(0x88aaff, 0.3);
-            fillLight.position.set(-6, 4, -4);
-            scene.add(fillLight);
-
-            const size = 8, segments = 56;
-            const geometry = new THREE.PlaneGeometry(size, size, segments, segments);
-            geometry.rotateX(-Math.PI / 2);
-            const pos = geometry.attributes.position;
-
-            function ridgeNoise(x, y) {{
-                return Math.sin(x * 1.3) * Math.cos(y * 1.1) * 0.6
-                     + Math.sin(x * 0.6 + y * 0.9) * 0.4
-                     + Math.sin(x * 2.1 - y * 0.4) * 0.15;
-            }}
-
-            const heights = [];
-            let minH = Infinity, maxH = -Infinity;
-            for (let i = 0; i < pos.count; i++) {{
-                const h = ridgeNoise(pos.getX(i), pos.getZ(i)) * 1.35;
-                heights.push(h);
-                if (h < minH) minH = h;
-                if (h > maxH) maxH = h;
-            }}
-
-            const colors = [];
-            for (let i = 0; i < pos.count; i++) {{
-                const h = heights[i];
-                pos.setY(i, h);
-                const t = (h - minH) / (maxH - minH);
-                let r, g, b;
-                if (t < 0.42) {{ r = 0.10 + t * 0.25; g = 0.32 + t * 0.35; b = 0.14; }}
-                else if (t < 0.72) {{ r = 0.42 + t * 0.25; g = 0.33 + t * 0.15; b = 0.20; }}
-                else {{ r = 0.82 + t * 0.16; g = 0.83 + t * 0.16; b = 0.88; }}
-                colors.push(r, g, b);
-            }}
-            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-            geometry.computeVertexNormals();
-
-            const material = new THREE.MeshStandardMaterial({{
-                vertexColors: true, flatShading: true, roughness: 0.9, metalness: 0.05,
-            }});
-            const mesh = new THREE.Mesh(geometry, material);
-            scene.add(mesh);
-
-            function animate() {{
-                requestAnimationFrame(animate);
-                mesh.rotation.y += 0.0035;
-                renderer.render(scene, camera);
-            }}
-            animate();
-
-            window.addEventListener('resize', function() {{
-                const w = getWidth();
-                camera.aspect = w / height;
-                camera.updateProjectionMatrix();
-                renderer.setSize(w, height);
-            }});
-        }})();
-        </script>
-        """,
-        unsafe_allow_javascript=True,
-    )
-
 
 def status_card(level: str, extra_note: str = ""):
     ui = LEVEL_UI.get(level, LEVEL_UI["Moderate"])
@@ -498,7 +406,6 @@ def main():
         "for North East India (Sikkim pilot).</p>",
         unsafe_allow_html=True,
     )
-    render_hero_terrain_3d()
 
     model_a, model_b = get_models(args.model_a, args.model_b)
     df = get_features(args.features)
