@@ -137,6 +137,30 @@ def get_location_name(lat: float, lon: float) -> str:
         return f"{lat:.3f}, {lon:.3f}"
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def geocode_place_name(query: str):
+    """Forward-geocode a typed place name via OpenStreetMap's free Nominatim
+    search API — the mirror of get_location_name(). Returns (lat, lon,
+    display_name) or None if nothing matched / the service is unreachable."""
+    if not query or not query.strip():
+        return None
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"format": "json", "q": query, "limit": 1, "addressdetails": 1},
+            headers={"User-Agent": "landslide-early-warning-dashboard/1.0"},
+            timeout=4,
+        )
+        resp.raise_for_status()
+        results = resp.json()
+        if not results:
+            return None
+        top = results[0]
+        return float(top["lat"]), float(top["lon"]), top.get("display_name", query)
+    except Exception:
+        return None
+
+
 def parse_cli_args():
     """Streamlit's CLI sometimes forwards the "--" separator to the script and
     sometimes strips it before handing off sys.argv, depending on version.
@@ -277,22 +301,63 @@ def main():
         rain_multiplier = st.slider("Rain intensity", 0.0, 3.0, 1.0, 0.1,
                                      format="%.1fx", label_visibility="collapsed")
         st.divider()
-        st.caption("Didn't get a location prompt, or said no by mistake? "
-                   "Reload the page and allow location access when your browser asks.")
-        manual = st.checkbox("Pick a location manually instead")
+
+        st.header("📍 Set a location")
+        st.caption("Didn't get a location prompt, or want to check somewhere else? "
+                   "Set it manually below.")
+        manual = st.checkbox("Enter a location manually")
+        manual_mode = None
+        place_query = None
+        manual_lat, manual_lon = None, None
         manual_idx = None
         if manual:
-            manual_idx = st.selectbox(
-                "Sample location", options=df.index.tolist(),
-                format_func=lambda i: f"#{i} ({df.loc[i, 'latitude']:.3f}, {df.loc[i, 'longitude']:.3f})",
+            manual_mode = st.radio(
+                "How?", ["Type a place name", "Enter coordinates", "Pick a sample point"],
+                label_visibility="collapsed",
             )
+            if manual_mode == "Type a place name":
+                place_query = st.text_input(
+                    "Place name", placeholder="e.g. Gangtok, Sikkim",
+                    label_visibility="collapsed",
+                )
+            elif manual_mode == "Enter coordinates":
+                manual_lat = st.number_input("Latitude", value=27.33, format="%.4f")
+                manual_lon = st.number_input("Longitude", value=88.61, format="%.4f")
+            else:
+                manual_idx = st.selectbox(
+                    "Sample location", options=df.index.tolist(),
+                    format_func=lambda i: f"#{i} ({df.loc[i, 'latitude']:.3f}, {df.loc[i, 'longitude']:.3f})",
+                )
 
     user_latlon = None
     distance_note = ""
 
-    if manual_idx is not None:
+    if manual_mode == "Type a place name" and place_query:
+        found = geocode_place_name(place_query)
+        if found:
+            lat, lon, matched_name = found
+            user_latlon = (lat, lon)
+            nearest, dist_km = nearest_row(df, lat, lon)
+            base_row = nearest.to_dict()
+            distance_note = (
+                f"Matched to \"{matched_name}\" — showing the closest monitored point "
+                f"({dist_km:.1f} km away)."
+            )
+        else:
+            st.warning("📍 Couldn't find that place. Try a different spelling, or "
+                       "add the state/district (e.g. \"Gangtok, Sikkim\").")
+            st.stop()
+    elif manual_mode == "Enter coordinates" and manual_lat is not None:
+        user_latlon = (manual_lat, manual_lon)
+        nearest, dist_km = nearest_row(df, manual_lat, manual_lon)
+        base_row = nearest.to_dict()
+        distance_note = f"Showing the closest monitored point to those coordinates ({dist_km:.1f} km away)."
+    elif manual_idx is not None:
         base_row = df.loc[manual_idx].to_dict()
         user_latlon = (base_row["latitude"], base_row["longitude"])
+    elif manual and manual_mode == "Type a place name":
+        st.info("📍 Type a place name in the sidebar to check its risk.")
+        st.stop()
     elif loc and "coords" in loc:
         lat, lon = loc["coords"]["latitude"], loc["coords"]["longitude"]
         user_latlon = (lat, lon)
